@@ -182,3 +182,92 @@ def test_save_state_under_lock(tmp_path):
     loaded = storage.load_state()
     assert loaded == custom_state
     assert oct(storage.state_file.stat().st_mode & 0o777) == "0o600"
+
+
+def test_switch_profile_syncs_outgoing_live_token(tmp_path, sample_token_dict):
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True)
+    live_token = gemini_home / "antigravity-oauth-token"
+
+    # Setup acc1 as active profile
+    token1 = dict(sample_token_dict)
+    token1["token"] = dict(sample_token_dict["token"])
+    token1["token"]["access_token"] = "token_acc1_v1"
+    live_token.write_text(json.dumps(token1))
+    storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
+    storage.save_profile("acc1")
+    assert storage.get_active_profile() == "acc1"
+
+    # Setup acc2 in vault
+    token2 = dict(sample_token_dict)
+    token2["token"] = dict(sample_token_dict["token"])
+    token2["token"]["access_token"] = "token_acc2_v1"
+    acc2_dir = promux_home / "accounts" / "acc2"
+    acc2_dir.mkdir(parents=True)
+    (acc2_dir / "antigravity-oauth-token").write_text(json.dumps(token2))
+    state = storage.load_state()
+    state["accounts"]["acc2"] = AccountMeta(name="acc2").to_dict()
+    storage.save_state(state)
+
+    # Simulate agy refreshing the live token for acc1 while active
+    token1_refreshed = dict(sample_token_dict)
+    token1_refreshed["token"] = dict(sample_token_dict["token"])
+    token1_refreshed["token"]["access_token"] = "token_acc1_refreshed"
+    live_token.write_text(json.dumps(token1_refreshed))
+
+    # Switch to acc2
+    assert storage.switch_profile("acc2") is True
+    assert storage.get_active_profile() == "acc2"
+
+    # Check outgoing acc1 vault token was synced with the refreshed token!
+    vault1 = promux_home / "accounts" / "acc1" / "antigravity-oauth-token"
+    vault1_data = json.loads(vault1.read_text())
+    assert vault1_data["token"]["access_token"] == "token_acc1_refreshed"
+    assert oct(vault1.stat().st_mode & 0o777) == "0o600"
+
+    # And live token is now acc2's token
+    live_data = json.loads(live_token.read_text())
+    assert live_data["token"]["access_token"] == "token_acc2_v1"
+    assert oct(live_token.stat().st_mode & 0o777) == "0o600"
+
+    # Simulate agy refreshing the live token for acc2 while active
+    token2_refreshed = dict(sample_token_dict)
+    token2_refreshed["token"] = dict(sample_token_dict["token"])
+    token2_refreshed["token"]["access_token"] = "token_acc2_refreshed"
+    live_token.write_text(json.dumps(token2_refreshed))
+
+    # Switch back to acc1
+    assert storage.switch_profile("acc1") is True
+    assert storage.get_active_profile() == "acc1"
+
+    # Check outgoing acc2 vault token was synced with its refreshed token!
+    vault2 = promux_home / "accounts" / "acc2" / "antigravity-oauth-token"
+    vault2_data = json.loads(vault2.read_text())
+    assert vault2_data["token"]["access_token"] == "token_acc2_refreshed"
+    assert oct(vault2.stat().st_mode & 0o777) == "0o600"
+
+    # And live token is now acc1's token
+    live_data_2 = json.loads(live_token.read_text())
+    assert live_data_2["token"]["access_token"] == "token_acc1_refreshed"
+
+
+def test_storage_transaction_context_manager(tmp_path):
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
+
+    with storage.transaction() as state:
+        state["accounts"]["new_acc"] = {"name": "new_acc"}
+
+    loaded = storage.load_state()
+    assert "new_acc" in loaded["accounts"]
+
+    # Test transaction rollback on exception
+    with pytest.raises(ValueError):
+        with storage.transaction() as state:
+            state["accounts"]["bad_acc"] = {"name": "bad_acc"}
+            raise ValueError("simulated error")
+
+    loaded_after_error = storage.load_state()
+    assert "bad_acc" not in loaded_after_error["accounts"]

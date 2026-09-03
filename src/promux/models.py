@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, Any, Dict
 
@@ -16,7 +16,7 @@ class AccountMeta:
     name: str
     enabled: bool = True
     cooldown_until: Optional[datetime] = None
-    saved_at: datetime = field(default_factory=datetime.utcnow)
+    saved_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_used_at: Optional[datetime] = None
     email: Optional[str] = None
     project_id: Optional[str] = None
@@ -27,7 +27,10 @@ class AccountMeta:
         if not self.enabled:
             return AccountState.DISABLED
         if self.cooldown_until:
-            now = datetime.now(self.cooldown_until.tzinfo) if self.cooldown_until.tzinfo else datetime.utcnow()
+            if self.cooldown_until.tzinfo is None:
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+            else:
+                now = datetime.now(timezone.utc)
             if self.cooldown_until > now:
                 return AccountState.COOLDOWN
         return AccountState.STANDBY
@@ -50,7 +53,7 @@ class AccountMeta:
             name=data["name"],
             enabled=data.get("enabled", True),
             cooldown_until=datetime.fromisoformat(data["cooldown_until"]) if data.get("cooldown_until") else None,
-            saved_at=datetime.fromisoformat(data["saved_at"]) if data.get("saved_at") else datetime.utcnow(),
+            saved_at=datetime.fromisoformat(data["saved_at"]) if data.get("saved_at") else datetime.now(timezone.utc),
             last_used_at=datetime.fromisoformat(data["last_used_at"]) if data.get("last_used_at") else None,
             email=data.get("email"),
             project_id=data.get("project_id"),

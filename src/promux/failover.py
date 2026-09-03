@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Any
 from .constants import DEFAULT_COOLDOWN_MINUTES
@@ -32,51 +33,70 @@ class FailoverEngine:
         return eligible
 
     def apply_cooldown(self, name: str, minutes: int = DEFAULT_COOLDOWN_MINUTES):
-        state = self.storage.load_state()
-        if name in state.get("accounts", {}):
-            until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
-            state["accounts"][name]["cooldown_until"] = until.isoformat()
-            self.storage.save_state(state)
+        tx_func = getattr(self.storage, "transaction", None)
+        if callable(tx_func):
+            cm = self.storage.transaction()
+        else:
+            @contextmanager
+            def _fallback_tx():
+                s = self.storage.load_state()
+                yield s
+                self.storage.save_state(s)
+            cm = _fallback_tx()
+
+        with cm as state:
+            if name in state.get("accounts", {}):
+                until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+                state["accounts"][name]["cooldown_until"] = until.isoformat()
 
     def rotate_next(
         self,
         reason: str = "manual",
         cooldown_minutes: int = DEFAULT_COOLDOWN_MINUTES,
     ) -> RotationResult:
-        state = self.storage.load_state()
-        active_name = state.get("active")
+        tx_func = getattr(self.storage, "transaction", None)
+        if callable(tx_func):
+            cm = self.storage.transaction()
+        else:
+            @contextmanager
+            def _fallback_tx():
+                s = self.storage.load_state()
+                yield s
+                self.storage.save_state(s)
+            cm = _fallback_tx()
 
-        # Put active into cooldown
-        cooldown_until = None
-        if active_name and active_name in state.get("accounts", {}):
-            cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=cooldown_minutes)
-            state["accounts"][active_name]["cooldown_until"] = cooldown_until.isoformat()
-            self.storage.save_state(state)
+        with cm as state:
+            active_name = state.get("active")
 
-        candidates = self.get_eligible_standby(exclude=active_name)
-        if not candidates:
+            candidates = self.get_eligible_standby(exclude=active_name)
+            if not candidates:
+                return RotationResult(
+                    success=False,
+                    from_account=active_name,
+                    to_account=None,
+                    reason=f"No eligible standby accounts ({reason})",
+                    cooldown_until=None,
+                )
+
+            next_target = candidates[0].name
+            if not self.storage.switch_profile(next_target):
+                return RotationResult(
+                    success=False,
+                    from_account=active_name,
+                    to_account=next_target,
+                    reason=f"Failed to switch token to {next_target}",
+                    cooldown_until=None,
+                )
+
+            cooldown_until = None
+            if active_name and active_name in state.get("accounts", {}):
+                cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=cooldown_minutes)
+                state["accounts"][active_name]["cooldown_until"] = cooldown_until.isoformat()
+
             return RotationResult(
-                success=False,
-                from_account=active_name,
-                to_account=None,
-                reason=f"No eligible standby accounts ({reason})",
-                cooldown_until=cooldown_until,
-            )
-
-        next_target = candidates[0].name
-        if not self.storage.switch_profile(next_target):
-            return RotationResult(
-                success=False,
+                success=True,
                 from_account=active_name,
                 to_account=next_target,
-                reason=f"Failed to switch token to {next_target}",
+                reason=reason,
                 cooldown_until=cooldown_until,
             )
-
-        return RotationResult(
-            success=True,
-            from_account=active_name,
-            to_account=next_target,
-            reason=reason,
-            cooldown_until=cooldown_until,
-        )

@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import pytest
 from promux.failover import FailoverEngine
@@ -15,6 +16,10 @@ class FakeStorage:
 
     def save_state(self, state):
         self.state = state
+
+    @contextmanager
+    def transaction(self):
+        yield self.state
 
     def switch_profile(self, name):
         if self.fail_switch:
@@ -59,6 +64,11 @@ def test_failover_no_candidates():
     res = engine.rotate_next(reason="quota_exhausted")
     assert res.success is False
     assert "No eligible standby" in res.reason
+    assert res.cooldown_until is None
+    # C2: active account must NOT be in cooldown when rotation fails
+    acc1_meta = AccountMeta.from_dict(storage.state["accounts"]["acc1"])
+    assert acc1_meta.state == AccountState.STANDBY
+    assert storage.state["accounts"]["acc1"].get("cooldown_until") is None
 
 
 def test_get_eligible_standby_lru_sorting_with_none_and_timezones():
@@ -134,6 +144,11 @@ def test_rotate_next_switch_failure():
     assert res.from_account == "acc1"
     assert res.to_account == "acc2"
     assert "Failed to switch token to acc2" in res.reason
+    assert res.cooldown_until is None
+    # C2: active account must NOT be in cooldown when switch fails
+    acc1_meta = AccountMeta.from_dict(storage.state["accounts"]["acc1"])
+    assert acc1_meta.state == AccountState.STANDBY
+    assert storage.state["accounts"]["acc1"].get("cooldown_until") is None
 
 
 def test_rotate_next_no_prior_active_account():

@@ -37,10 +37,12 @@ class LogWatcher:
         failover: Any,
         log_files: Optional[List[Path]] = None,
         poll_seconds: float = DEFAULT_POLL_SECONDS,
+        gemini_home: Optional[Path] = None,
     ):
         self.failover = failover
         self._custom_log_files = log_files
         self.poll_seconds = poll_seconds
+        self.gemini_home = Path(gemini_home) if gemini_home else None
         self.offsets: Dict[Path, int] = {}
         self.inodes: Dict[Path, int] = {}
         self.running = False
@@ -49,16 +51,19 @@ class LogWatcher:
         if self._custom_log_files is not None:
             return [p for p in self._custom_log_files if p.exists()]
         files: List[Path] = []
-        if CLI_LOG.exists():
-            files.append(CLI_LOG)
-        if LOG_DIR.exists():
+        cli_log = (self.gemini_home / "cli.log") if self.gemini_home else CLI_LOG
+        log_dir = (self.gemini_home / "log") if self.gemini_home else LOG_DIR
+
+        if cli_log.exists():
+            files.append(cli_log)
+        if log_dir.exists():
             def _mtime(p: Path) -> float:
                 try:
                     return p.stat().st_mtime
                 except OSError:
                     return 0.0
 
-            log_files = [p for p in LOG_DIR.glob("*.log") if p.is_file()]
+            log_files = [p for p in log_dir.glob("*.log") if p.is_file()]
             files.extend(sorted(log_files, key=_mtime, reverse=True)[:5])
         return list(dict.fromkeys(files))
 
@@ -114,6 +119,10 @@ class LogWatcher:
                     new_lines = f.readlines()
                     self.offsets[path] = f.tell()
 
+                if new_lines and not new_lines[-1].endswith("\n"):
+                    partial_line = new_lines.pop()
+                    self.offsets[path] -= len(partial_line.encode("utf-8"))
+
                 for line in new_lines:
                     for name, pat in self.PATTERNS:
                         if pat.search(line):
@@ -154,8 +163,7 @@ class LogWatcher:
                         on_match(m)
                     cool = cooldown_minutes if cooldown_minutes is not None else self.parse_reset_minutes(m.reset_hint)
                     self.failover.rotate_next(reason=f"reactive: {m.pattern}", cooldown_minutes=cool)
-                    if not self.running:
-                        break
+                    break
                 if not self.running:
                     break
                 time.sleep(self.poll_seconds)

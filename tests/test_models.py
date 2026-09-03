@@ -22,17 +22,18 @@ from promux.constants import (
 
 
 def test_account_state_computation():
-    now = datetime.utcnow()
+    now_utc = datetime.now(timezone.utc)
+    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
     # Disabled
     disabled_acct = AccountMeta(name="work", enabled=False)
     assert disabled_acct.state == AccountState.DISABLED
 
     # Cooldown (naive datetime)
-    cool_acct = AccountMeta(name="work", enabled=True, cooldown_until=now + timedelta(minutes=30))
+    cool_acct = AccountMeta(name="work", enabled=True, cooldown_until=now_naive + timedelta(minutes=30))
     assert cool_acct.state == AccountState.COOLDOWN
 
     # Standby (cooldown expired)
-    standby_acct = AccountMeta(name="work", enabled=True, cooldown_until=now - timedelta(minutes=10))
+    standby_acct = AccountMeta(name="work", enabled=True, cooldown_until=now_naive - timedelta(minutes=10))
     assert standby_acct.state == AccountState.STANDBY
 
     # Standby (no cooldown set)
@@ -40,7 +41,6 @@ def test_account_state_computation():
     assert standby_no_cool.state == AccountState.STANDBY
 
     # Cooldown with timezone-aware datetime
-    now_utc = datetime.now(timezone.utc)
     cool_tz_acct = AccountMeta(name="work", enabled=True, cooldown_until=now_utc + timedelta(minutes=30))
     assert cool_tz_acct.state == AccountState.COOLDOWN
 

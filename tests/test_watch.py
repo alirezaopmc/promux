@@ -233,3 +233,67 @@ def test_log_watcher_multiple_matches_in_batch(tmp_path):
     assert matches[0].reset_hint == "10m"
     assert matches[1].pattern == "RESOURCE_EXHAUSTED"
 
+
+def test_log_watcher_multiple_matches_in_batch_only_one_rotation(tmp_path):
+    log_file = tmp_path / "cli.log"
+    log_file.write_text("Init\n")
+
+    failover = FakeFailover()
+    watcher = LogWatcher(failover=failover, log_files=[log_file], poll_seconds=0.01)
+    watcher.init_offsets()
+
+    with open(log_file, "a") as f:
+        f.write("Line 1: Individual quota reached. Resets in 10m.\n")
+        f.write("Line 2: RESOURCE_EXHAUSTED (code 429)\n")
+        f.write("Line 3: Weekly quota limit reached\n")
+
+    watcher.run_forever(max_iterations=1)
+
+    # Must only trigger ONE rotation for the entire batch, not burn through all standby accounts
+    assert len(failover.rotations) == 1
+    assert failover.rotations[0][0] == "reactive: INDIVIDUAL_QUOTA"
+    assert failover.rotations[0][1] == 10
+
+
+def test_log_watcher_partial_line_splits(tmp_path):
+    log_file = tmp_path / "cli.log"
+    log_file.write_text("Init\n")
+
+    failover = FakeFailover()
+    watcher = LogWatcher(failover=failover, log_files=[log_file], poll_seconds=0.01)
+    watcher.init_offsets()
+
+    # Write a partial line without trailing newline
+    with open(log_file, "a") as f:
+        f.write("Normal line\n")
+        f.write("Error: Individual quota reached. Res")
+
+    matches1 = watcher.run_once()
+    assert matches1 == []
+
+    # Complete the line in next write
+    with open(log_file, "a") as f:
+        f.write("ets in 25m.\n")
+
+    matches2 = watcher.run_once()
+    assert len(matches2) == 1
+    assert matches2[0].pattern == "INDIVIDUAL_QUOTA"
+    assert matches2[0].reset_hint == "25m"
+
+
+def test_log_watcher_dynamic_log_discovery(tmp_path):
+    gemini_home = tmp_path / "gemini"
+    gemini_home.mkdir()
+
+    failover = FakeFailover()
+    # At start, cli.log does NOT exist
+    watcher = LogWatcher(failover=failover, gemini_home=gemini_home, poll_seconds=0.01)
+    assert watcher.get_log_files() == []
+
+    # Later, agy creates cli.log
+    cli_log = gemini_home / "cli.log"
+    cli_log.write_text("Init\n")
+
+    # On next poll loop, it is discovered dynamically!
+    assert cli_log in watcher.get_log_files()
+

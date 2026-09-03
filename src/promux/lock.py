@@ -16,7 +16,7 @@ def file_lock(
     lock_path = Path(lock_path)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     start_time = time.monotonic()
     acquired = False
 

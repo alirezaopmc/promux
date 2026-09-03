@@ -340,22 +340,16 @@ def cmd_quota(storage: StorageEngine, name: Optional[str], json_out: bool) -> in
 
 
 def cmd_watch(failover: FailoverEngine, poll_seconds: float, cooldown: Optional[int]) -> int:
-    gemini_home = Path(os.environ.get("PROMUX_GEMINI_HOME", GEMINI_CLI_HOME))
-    log_files = None
+    gemini_home = None
     if "PROMUX_GEMINI_HOME" in os.environ:
-        cli_log = gemini_home / "cli.log"
-        log_dir = gemini_home / "log"
-        files = []
-        if cli_log.exists():
-            files.append(cli_log)
-        if log_dir.exists():
-            files.extend(sorted(log_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)[:5])
-        log_files = files
+        gemini_home = Path(os.environ["PROMUX_GEMINI_HOME"])
+    elif hasattr(failover, "storage") and hasattr(failover.storage, "gemini_home"):
+        gemini_home = failover.storage.gemini_home
 
     watcher = LogWatcher(
         failover=failover,
-        log_files=log_files,
         poll_seconds=poll_seconds,
+        gemini_home=gemini_home,
     )
 
     def on_match(match: LogMatch):
