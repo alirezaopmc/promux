@@ -4,11 +4,13 @@ import urllib.request
 from typing import Dict, Any, Optional
 from .constants import (
     CODE_ASSIST_BASE_URL,
+    FALLBACK_CODE_ASSIST_BASE_URL,
     LOAD_ENDPOINT,
     QUOTA_ENDPOINT,
     USERINFO_URL,
     USER_AGENT,
     DEFAULT_HTTP_TIMEOUT,
+    detect_code_assist_url,
 )
 from .models import QuotaSummary
 
@@ -16,25 +18,45 @@ from .models import QuotaSummary
 class QuotaClient:
     """Client for Cloud Code Assist and Google UserInfo REST endpoints."""
 
-    def __init__(self, token: str, timeout: float = DEFAULT_HTTP_TIMEOUT):
+    def __init__(
+        self,
+        token: str,
+        base_url: Optional[str] = None,
+        timeout: float = DEFAULT_HTTP_TIMEOUT
+    ):
         self.token = token
+        self.base_url = (base_url or detect_code_assist_url()).rstrip("/")
         self.timeout = timeout
 
     def _post(self, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        url = f"{CODE_ASSIST_BASE_URL}{endpoint}"
         data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/json",
-                "User-Agent": USER_AGENT,
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+        }
+
+        urls_to_try = [f"{self.base_url}{endpoint}"]
+        if self.base_url != FALLBACK_CODE_ASSIST_BASE_URL:
+            urls_to_try.append(f"{FALLBACK_CODE_ASSIST_BASE_URL}{endpoint}")
+
+        last_error = None
+        for url in urls_to_try:
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers=headers,
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except (urllib.error.HTTPError, urllib.error.URLError, OSError) as e:
+                last_error = e
+                continue
+        if last_error:
+            raise last_error
+        return {}
 
     def _get(self, url: str) -> Dict[str, Any]:
         req = urllib.request.Request(

@@ -1,6 +1,7 @@
 import os
 import re
 from pathlib import Path
+from typing import Optional
 
 # Paths
 PROMUX_HOME = Path(os.environ.get("PROMUX_HOME", Path.home() / ".promux"))
@@ -15,11 +16,32 @@ CLI_LOG = GEMINI_CLI_HOME / "cli.log"
 LOG_DIR = GEMINI_CLI_HOME / "log"
 
 # API Endpoints
-CODE_ASSIST_BASE_URL = "https://cloudcode-pa.googleapis.com"
+CODE_ASSIST_BASE_URL = os.environ.get("PROMUX_CODE_ASSIST_URL", "https://cloudcode-pa.googleapis.com")
+FALLBACK_CODE_ASSIST_BASE_URL = "https://daily-cloudcode-pa.googleapis.com"
 LOAD_ENDPOINT = "/v1internal:loadCodeAssist"
 QUOTA_ENDPOINT = "/v1internal:retrieveUserQuotaSummary"
 USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 USER_AGENT = "antigravity"
+
+
+def detect_code_assist_url(gemini_home: Optional[Path] = None) -> str:
+    """Detect whether Antigravity CLI uses daily-cloudcode or prod endpoint."""
+    env_url = os.environ.get("PROMUX_CODE_ASSIST_URL")
+    if env_url:
+        return env_url
+    gh = gemini_home or GEMINI_CLI_HOME
+    cli_log = gh / "cli.log"
+    if cli_log.exists():
+        try:
+            with open(cli_log, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()[-100:]
+                for line in reversed(lines):
+                    m = re.search(r"https://([a-zA-Z0-9.-]*cloudcode-pa\.googleapis\.com)", line)
+                    if m:
+                        return f"https://{m.group(1)}"
+        except OSError:
+            pass
+    return CODE_ASSIST_BASE_URL
 
 # Regex Signatures (SPEC §5.1)
 INDIVIDUAL_QUOTA_RE = re.compile(r"(?i)Individual quota reached")

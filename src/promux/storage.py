@@ -123,10 +123,22 @@ class StorageEngine:
                 prev_vault = self.accounts_dir / prev_active
                 if prev_vault.exists():
                     prev_vault_token = prev_vault / "antigravity-oauth-token"
-                    tmp_prev = prev_vault_token.with_suffix(".tmp")
-                    shutil.copy2(self.live_token, tmp_prev)
-                    tmp_prev.chmod(0o600)
-                    os.replace(tmp_prev, prev_vault_token)
+                    should_sync = True
+                    if prev_vault_token.exists():
+                        try:
+                            prev_data = json.loads(prev_vault_token.read_text(encoding="utf-8"))
+                            live_data = json.loads(self.live_token.read_text(encoding="utf-8"))
+                            pr = prev_data.get("token", {}).get("refresh_token")
+                            lr = live_data.get("token", {}).get("refresh_token")
+                            if pr and lr and pr != lr:
+                                should_sync = False
+                        except Exception:
+                            should_sync = True
+                    if should_sync:
+                        tmp_prev = prev_vault_token.with_suffix(".tmp")
+                        shutil.copy2(self.live_token, tmp_prev)
+                        tmp_prev.chmod(0o600)
+                        os.replace(tmp_prev, prev_vault_token)
 
             # I2: Atomic Hot-Swapping of live_token
             self.live_token.parent.mkdir(parents=True, exist_ok=True)

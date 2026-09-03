@@ -170,7 +170,7 @@ def test_quota_client_post_request(monkeypatch):
 
     resp = client._post(LOAD_ENDPOINT, {"test": 123})
     assert resp == {"result": "ok"}
-    assert captured_req.full_url == f"{CODE_ASSIST_BASE_URL}{LOAD_ENDPOINT}"
+    assert captured_req.full_url == f"{client.base_url}{LOAD_ENDPOINT}"
     assert captured_req.get_method() == "POST"
     assert captured_req.headers["Authorization"] == "Bearer test_token"
     assert captured_req.headers["Content-type"] == "application/json"
