@@ -20,7 +20,17 @@ def generate_bash_completion() -> str:
     return r"""# bash completion for promux
 _promux_completion() {
     local cur prev words cword
-    _init_completion || return
+    if declare -F _init_completion >/dev/null 2>&1; then
+        _init_completion || return
+    else
+        cur="${COMP_WORDS[COMP_CWORD]}"
+        prev=""
+        if [[ $COMP_CWORD -gt 0 ]]; then
+            prev="${COMP_WORDS[COMP_CWORD-1]}"
+        fi
+        words=("${COMP_WORDS[@]}")
+        cword=$COMP_CWORD
+    fi
 
     local commands="list save switch next quota whoami remove watch completion"
     local common_opts="--json --help -h"
@@ -156,5 +166,9 @@ _promux() {
     esac
 }
 
-_promux "$@"
+if [[ -n "$funcstack[1]" && "$funcstack[1]" == "_promux" ]]; then
+    _promux "$@"
+else
+    compdef _promux promux 2>/dev/null || true
+fi
 """

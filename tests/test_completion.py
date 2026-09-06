@@ -1,4 +1,8 @@
+import shutil
+import subprocess
+
 from promux.completion import (
+    SUBCOMMANDS,
     SUPPORTED_SHELLS,
     generate_bash_completion,
     generate_zsh_completion,
@@ -18,11 +22,33 @@ def test_generate_bash_completion() -> None:
     # Dynamic account lookup check
     assert "accounts" in script
 
+    # Bash fallback without bash-completion package
+    assert "declare -F _init_completion" in script
+    assert "COMP_WORDS" in script
+
+    # All subcommands included
+    for cmd in SUBCOMMANDS:
+        assert cmd in script
+
+    # Syntax check via bash -n if available
+    bash_path = shutil.which("bash")
+    if bash_path:
+        proc = subprocess.run(
+            [bash_path, "-n"],
+            input=script,
+            text=True,
+            capture_output=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+
 
 def test_generate_zsh_completion() -> None:
     script = generate_zsh_completion()
     assert "#compdef promux" in script
     assert "_promux()" in script
-    assert "switch" in script
-    assert "quota" in script
-    assert "completion" in script
+    assert "compdef _promux promux" in script
+    assert "funcstack[1]" in script
+
+    # All subcommands included
+    for cmd in SUBCOMMANDS:
+        assert cmd in script
