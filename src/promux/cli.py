@@ -401,129 +401,150 @@ def _fetch_account_quota(
 
 
 def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
-    target_name = name or storage.get_active_profile()
-    if not target_name:
-        msg = "No account specified and no active profile."
-        if json_out:
-            print(json.dumps({"error": msg}, indent=2))
-        print(f"Error: {msg}", file=sys.stderr)
-        return 1
+    active_profile = storage.get_active_profile()
 
-    acct = storage.get_account(target_name)
-    if not acct:
-        msg = f"Account '{target_name}' not found in vault."
-        if json_out:
-            print(json.dumps({"error": msg}, indent=2))
-        print(f"Error: {msg}", file=sys.stderr)
-        return 1
-
-    # Locate token file
-    if target_name == storage.get_active_profile() and storage.live_token.exists():
-        token_path = storage.live_token
-    else:
-        token_path = storage.accounts_dir / target_name / "antigravity-oauth-token"
-
-    token_data = _read_token_data(token_path)
-    access_token = _get_or_refresh_access_token(token_path)
-    if not access_token:
-        access_token = _extract_access_token(token_data)
-    if not access_token:
-        msg = f"Could not extract access token for account '{target_name}'."
-        if json_out:
-            print(json.dumps({"error": msg}, indent=2))
-        print(f"Error: {msg}", file=sys.stderr)
-        return 1
-
-    client = QuotaClient(token=access_token)
-    project_id = acct.project_id
-    if not project_id:
-        try:
-            meta = client.load_metadata()
-            project_id = meta.get("project_id")
-            if project_id:
-                state = storage.load_state()
-                if target_name in state.get("accounts", {}):
-                    state["accounts"][target_name]["project_id"] = project_id
-                    storage.save_state(state)
-        except Exception as e:
-            msg = f"Failed to load project metadata for '{target_name}': {e}"
+    # Single-profile detail mode
+    if name is not None:
+        qs, project_id, err = _fetch_account_quota(storage, name)
+        if err or not qs:
+            msg = err or f"Could not retrieve quota for '{name}'."
             if json_out:
                 print(json.dumps({"error": msg}, indent=2))
             print(f"Error: {msg}", file=sys.stderr)
             return 1
 
-    if not project_id:
-        msg = f"Could not determine project ID for account '{target_name}'."
         if json_out:
-            print(json.dumps({"error": msg}, indent=2))
-        print(f"Error: {msg}", file=sys.stderr)
-        return 1
+            res = {
+                "account": name,
+                "project_id": project_id,
+                "gemini": {
+                    "5h_remaining": qs.gemini_5h_remaining,
+                    "5h_reset": qs.gemini_5h_reset,
+                    "weekly_remaining": qs.gemini_weekly_remaining,
+                    "weekly_reset": qs.gemini_weekly_reset,
+                },
+                "third_party": {
+                    "5h_remaining": qs.third_party_5h_remaining,
+                    "5h_reset": qs.third_party_5h_reset,
+                    "weekly_remaining": qs.third_party_weekly_remaining,
+                    "weekly_reset": qs.third_party_weekly_reset,
+                },
+            }
+            print(json.dumps(res, indent=2))
+            return 0
 
-    try:
-        qs = client.get_quota(project_id)
-    except Exception as e:
-        if "401" in str(e):
-            td = _read_token_data(token_path)
-            refreshed = _refresh_token_file(token_path, td) if td else None
-            if refreshed:
-                client.token = refreshed
-                try:
-                    qs = client.get_quota(project_id)
-                except Exception as retry_e:
-                    msg = f"Error retrieving quota: {retry_e}"
-                    if json_out:
-                        print(json.dumps({"error": msg}, indent=2))
-                    print(f"Error: {msg}", file=sys.stderr)
-                    return 1
-            else:
-                msg = f"Error retrieving quota: {e}"
-                if json_out:
-                    print(json.dumps({"error": msg}, indent=2))
-                print(f"Error: {msg}", file=sys.stderr)
-                return 1
-        else:
-            msg = f"Error retrieving quota: {e}"
-            if json_out:
-                print(json.dumps({"error": msg}, indent=2))
-            print(f"Error: {msg}", file=sys.stderr)
-            return 1
+        active_tag = " [ACTIVE]" if name == active_profile else ""
+        print(f"Quota for account '{name}' (project: {project_id}){active_tag}:\n")
+        header = f"{'MODEL GROUP':<24} {'WINDOW':<10} {'REMAINING':<12} {'RESET TIME'}"
+        print(header)
+        print("-" * len(header))
 
-    if json_out:
-        res = {
-            "account": target_name,
-            "project_id": project_id,
-            "gemini": {
-                "5h_remaining": qs.gemini_5h_remaining,
-                "5h_reset": qs.gemini_5h_reset,
-                "weekly_remaining": qs.gemini_weekly_remaining,
-                "weekly_reset": qs.gemini_weekly_reset,
-            },
-            "third_party": {
-                "5h_remaining": qs.third_party_5h_remaining,
-                "5h_reset": qs.third_party_5h_reset,
-                "weekly_remaining": qs.third_party_weekly_remaining,
-                "weekly_reset": qs.third_party_weekly_reset,
-            },
-        }
-        print(json.dumps(res, indent=2))
+        def _fmt(val: float | None) -> str:
+            return f"{val * 100:.1f}%" if val is not None else "-"
+
+        g_5h = _fmt(qs.gemini_5h_remaining)
+        g_wk = _fmt(qs.gemini_weekly_remaining)
+        c_5h = _fmt(qs.third_party_5h_remaining)
+        c_wk = _fmt(qs.third_party_weekly_remaining)
+
+        print(f"{'Gemini Models':<24} {'5h':<10} {g_5h:<12} {qs.gemini_5h_reset or '-'}")
+        print(f"{'Gemini Models':<24} {'weekly':<10} {g_wk:<12} {qs.gemini_weekly_reset or '-'}")
+        tp_5h_reset = qs.third_party_5h_reset or "-"
+        tp_wk_reset = qs.third_party_weekly_reset or "-"
+        print(f"{'Claude & GPT Models':<24} {'5h':<10} {c_5h:<12} {tp_5h_reset}")
+        print(f"{'Claude & GPT Models':<24} {'weekly':<10} {c_wk:<12} {tp_wk_reset}")
         return 0
 
-    print(f"Quota for account '{target_name}' (project: {project_id}):\n")
-    header = f"{'MODEL GROUP':<24} {'WINDOW':<10} {'REMAINING':<12} {'RESET TIME'}"
-    divider = "-" * 70
-    print(header)
-    print(divider)
-    g_5h = f"{qs.gemini_5h_remaining * 100:.1f}%"
-    g_wk = f"{qs.gemini_weekly_remaining * 100:.1f}%"
-    tp_5h = f"{qs.third_party_5h_remaining * 100:.1f}%"
-    tp_wk = f"{qs.third_party_weekly_remaining * 100:.1f}%"
+    # Multi-profile overview mode
+    accounts = storage.list_accounts()
+    if not accounts:
+        msg = "No accounts registered in vault."
+        if json_out:
+            print(json.dumps([], indent=2))
+        else:
+            print(msg)
+        return 0
 
-    print(f"{'Gemini Models':<24} {'5h':<10} {g_5h:<12} {qs.gemini_5h_reset or '-'}")
-    print(f"{'Gemini Models':<24} {'weekly':<10} {g_wk:<12} {qs.gemini_weekly_reset or '-'}")
-    tp_5h_reset = qs.third_party_5h_reset or "-"
-    tp_wk_reset = qs.third_party_weekly_reset or "-"
-    print(f"{'Claude & GPT Models':<24} {'5h':<10} {tp_5h:<12} {tp_5h_reset}")
-    print(f"{'Claude & GPT Models':<24} {'weekly':<10} {tp_wk:<12} {tp_wk_reset}")
+    json_records = []
+    text_rows = []
+
+    for acct_meta in accounts:
+        acct_name = acct_meta.name
+        is_active = acct_name == active_profile
+        qs, project_id, err = _fetch_account_quota(storage, acct_name)
+
+        if json_out:
+            record: dict[str, Any] = {
+                "account": acct_name,
+                "active": is_active,
+                "project_id": project_id,
+            }
+            if qs:
+                record["gemini"] = {
+                    "5h_remaining": qs.gemini_5h_remaining,
+                    "5h_reset": qs.gemini_5h_reset,
+                    "weekly_remaining": qs.gemini_weekly_remaining,
+                    "weekly_reset": qs.gemini_weekly_reset,
+                }
+                record["third_party"] = {
+                    "5h_remaining": qs.third_party_5h_remaining,
+                    "5h_reset": qs.third_party_5h_reset,
+                    "weekly_remaining": qs.third_party_weekly_remaining,
+                    "weekly_reset": qs.third_party_weekly_reset,
+                }
+            else:
+                record["error"] = err
+            json_records.append(record)
+        else:
+            active_mark = "*" if is_active else ""
+            if qs:
+                g5 = (
+                    f"{qs.gemini_5h_remaining * 100:.1f}%"
+                    if qs.gemini_5h_remaining is not None
+                    else "-"
+                )
+                gw = (
+                    f"{qs.gemini_weekly_remaining * 100:.1f}%"
+                    if qs.gemini_weekly_remaining is not None
+                    else "-"
+                )
+                c5 = (
+                    f"{qs.third_party_5h_remaining * 100:.1f}%"
+                    if qs.third_party_5h_remaining is not None
+                    else "-"
+                )
+                cw = (
+                    f"{qs.third_party_weekly_remaining * 100:.1f}%"
+                    if qs.third_party_weekly_remaining is not None
+                    else "-"
+                )
+                reset_raw = qs.gemini_5h_reset or qs.third_party_5h_reset or "-"
+                reset_display = (
+                    reset_raw.split("T")[-1].replace("Z", "") if "T" in reset_raw else reset_raw
+                )
+            else:
+                g5 = "[AUTH ERROR]" if "401" in str(err) else "[ERROR]"
+                gw = "-"
+                c5 = "-"
+                cw = "-"
+                reset_display = "-"
+            text_rows.append((active_mark, acct_name, g5, gw, c5, cw, reset_display))
+
+    if json_out:
+        print(json.dumps(json_records, indent=2))
+        return 0
+
+    header = (
+        f"{'ACTIVE':<7} {'PROFILE':<17} {'GEMINI (5H)':<13} {'GEMINI (WK)':<13} "
+        f"{'CLAUDE (5H)':<13} {'CLAUDE (WK)':<13} {'NEXT RESET (UTC)'}"
+    )
+    print(header)
+    print("-" * len(header))
+    for active_mark, acct_name, g5, gw, c5, cw, reset_display in text_rows:
+        print(
+            f"{active_mark:<7} {acct_name:<17} {g5:<13} {gw:<13} {c5:<13} {cw:<13} {reset_display}"
+        )
+
     return 0
 
 

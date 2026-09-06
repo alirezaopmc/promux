@@ -301,8 +301,8 @@ def test_cli_quota_success(tmp_path, sample_token_dict, monkeypatch, capsys):
     rc = main(["quota"])
     assert rc == 0
     out, _ = capsys.readouterr()
-    assert "Gemini" in out
-    assert "Claude" in out or "third" in out.lower()
+    assert "GEMINI" in out or "Gemini" in out
+    assert "CLAUDE" in out or "Claude" in out or "third" in out.lower()
     assert "85" in out
 
     # JSON mode
@@ -328,19 +328,33 @@ def test_cli_quota_error_handling(tmp_path, sample_token_dict, monkeypatch, caps
 
     monkeypatch.setattr(QuotaClient, "get_quota", mock_get_quota_fail)
 
-    rc = main(["quota"])
+    rc = main(["quota", "demo"])
     assert rc == 1
     out, err = capsys.readouterr()
     assert "error" in (out + err).lower()
 
 
-def test_cli_quota_no_active_profile(tmp_path, monkeypatch, capsys):
+def test_cli_quota_nonexistent_profile(tmp_path, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch)
+
+    rc = main(["quota", "nonexistent"])
+    assert rc == 1
+    out, err = capsys.readouterr()
+    assert "not found" in (out + err).lower() or "error" in (out + err).lower()
+
+
+def test_cli_quota_empty_vault(tmp_path, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch)
 
     rc = main(["quota"])
-    assert rc == 1
-    out, err = capsys.readouterr()
-    assert "error" in (out + err).lower() or "no active" in (out + err).lower()
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    assert "No accounts registered in vault" in out
+
+    rc_json = main(["quota", "--json"])
+    assert rc_json == 0
+    out_json, _ = capsys.readouterr()
+    assert json.loads(out_json) == []
 
 
 def test_cli_watch_invocation(tmp_path, sample_token_dict, monkeypatch, capsys):
@@ -599,13 +613,17 @@ def test_fetch_account_quota_success(tmp_path, sample_token_dict, monkeypatch):
     main(["save", "testacc", "--email", "test@test.com"])
 
     monkeypatch.setattr(QuotaClient, "load_metadata", lambda self: {"project_id": "proj-123"})
-    monkeypatch.setattr(QuotaClient, "get_quota", lambda self, pid: QuotaSummary(
-        gemini_5h_remaining=0.95,
-        gemini_weekly_remaining=0.80,
-        third_party_5h_remaining=1.0,
-        third_party_weekly_remaining=0.40,
-        gemini_5h_reset="2026-09-06T18:00:00Z",
-    ))
+    monkeypatch.setattr(
+        QuotaClient,
+        "get_quota",
+        lambda self, pid: QuotaSummary(
+            gemini_5h_remaining=0.95,
+            gemini_weekly_remaining=0.80,
+            third_party_5h_remaining=1.0,
+            third_party_weekly_remaining=0.40,
+            gemini_5h_reset="2026-09-06T18:00:00Z",
+        ),
+    )
 
     storage = get_storage()
     qs, pid, err = _fetch_account_quota(storage, "testacc")
@@ -683,3 +701,146 @@ def test_fetch_account_quota_401_refresh_failure(tmp_path, sample_token_dict, mo
     assert err is not None
     assert "401" in err
 
+
+def test_cli_quota_all_profiles_matrix(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.quota import QuotaClient
+
+    main(["save", "acc1", "--email", "1@test.com"])
+    token2 = dict(sample_token_dict)
+    token2["token"]["access_token"] = "acc2_token"
+    (tmp_path / ".gemini" / "antigravity-oauth-token").write_text(json.dumps(token2))
+    main(["save", "acc2", "--email", "2@test.com"])
+    capsys.readouterr()
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda self: {"project_id": "test-proj"})
+    monkeypatch.setattr(
+        QuotaClient,
+        "get_quota",
+        lambda self, pid: QuotaSummary(
+            gemini_5h_remaining=0.961,
+            gemini_weekly_remaining=0.82,
+            third_party_5h_remaining=1.0,
+            third_party_weekly_remaining=0.317,
+            gemini_5h_reset="2026-09-06T16:58:03Z",
+        ),
+    )
+
+    rc = main(["quota"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    assert "PROFILE" in out
+    assert "GEMINI (5H)" in out
+    assert "CLAUDE (5H)" in out
+    assert "acc1" in out
+    assert "acc2" in out
+    assert "96.1%" in out
+
+
+def test_cli_quota_all_profiles_json(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.quota import QuotaClient
+
+    main(["save", "acc1"])
+    capsys.readouterr()
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda self: {"project_id": "test-proj"})
+    monkeypatch.setattr(
+        QuotaClient,
+        "get_quota",
+        lambda self, pid: QuotaSummary(
+            gemini_5h_remaining=0.5,
+            gemini_weekly_remaining=0.5,
+            third_party_5h_remaining=0.5,
+            third_party_weekly_remaining=0.5,
+        ),
+    )
+
+    rc = main(["quota", "--json"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    data = json.loads(out)
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["account"] == "acc1"
+    assert data[0]["active"] is True
+    assert "gemini" in data[0]
+
+
+def test_cli_quota_single_profile_detail(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.quota import QuotaClient
+
+    main(["save", "acc1"])
+    capsys.readouterr()
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda self: {"project_id": "test-proj"})
+    monkeypatch.setattr(
+        QuotaClient,
+        "get_quota",
+        lambda self, pid: QuotaSummary(
+            gemini_5h_remaining=0.85,
+            gemini_weekly_remaining=0.60,
+            third_party_5h_remaining=0.20,
+            third_party_weekly_remaining=0.40,
+            gemini_5h_reset="2026-09-06T20:00:00Z",
+        ),
+    )
+
+    rc = main(["quota", "acc1"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    assert "Quota for account 'acc1'" in out
+    assert "MODEL GROUP" in out
+    assert "Gemini Models" in out
+
+
+def test_cli_quota_all_profiles_with_isolated_error(
+    tmp_path, sample_token_dict, monkeypatch, capsys
+):
+    import copy
+
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import get_storage
+    from promux.quota import QuotaClient
+
+    main(["save", "acc1", "--email", "1@test.com"])
+    main(["save", "acc2", "--email", "2@test.com"])
+    main(["switch", "acc1"])
+    capsys.readouterr()
+
+    storage = get_storage()
+    token2 = copy.deepcopy(sample_token_dict)
+    token2["token"]["access_token"] = "acc2_token"
+    (storage.accounts_dir / "acc2" / "antigravity-oauth-token").write_text(json.dumps(token2))
+
+    def mock_get_quota(self, pid):
+        if self.token == "acc2_token":
+            raise Exception("HTTP Error 401: Unauthorized")
+        return QuotaSummary(
+            gemini_5h_remaining=0.9,
+            gemini_weekly_remaining=0.8,
+            third_party_5h_remaining=0.7,
+            third_party_weekly_remaining=0.6,
+        )
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda self: {"project_id": "test-proj"})
+    monkeypatch.setattr(QuotaClient, "get_quota", mock_get_quota)
+    monkeypatch.setattr("promux.cli._refresh_token_file", lambda p, td: None)
+
+    rc = main(["quota"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    assert "acc1" in out
+    assert "acc2" in out
+    assert "[AUTH ERROR]" in out
+    assert "90.0%" in out
+
+    rc_json = main(["quota", "--json"])
+    assert rc_json == 0
+    out_json, _ = capsys.readouterr()
+    data = json.loads(out_json)
+    assert len(data) == 2
+    acc2_rec = next(d for d in data if d["account"] == "acc2")
+    assert "error" in acc2_rec
+    assert "401" in acc2_rec["error"]
