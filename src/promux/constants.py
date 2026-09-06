@@ -21,7 +21,12 @@ FALLBACK_CODE_ASSIST_BASE_URL = "https://daily-cloudcode-pa.googleapis.com"
 LOAD_ENDPOINT = "/v1internal:loadCodeAssist"
 QUOTA_ENDPOINT = "/v1internal:retrieveUserQuotaSummary"
 USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+OAUTH_TOKEN_URL = os.environ.get("PROMUX_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token")
+OAUTH_CLIENT_ID = os.environ.get("PROMUX_OAUTH_CLIENT_ID", "")
+OAUTH_CLIENT_SECRET = os.environ.get("PROMUX_OAUTH_CLIENT_SECRET", "")
 USER_AGENT = "antigravity"
+
+
 
 
 def detect_code_assist_url(gemini_home: Optional[Path] = None) -> str:

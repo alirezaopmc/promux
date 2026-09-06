@@ -423,3 +423,159 @@ def test_cli_watch_on_match_callback(tmp_path, sample_token_dict, monkeypatch, c
     assert "RESOURCE_EXHAUSTED" in out
     assert "Reset hint detected: 30m" in out
 
+
+def test_refresh_token_file_success(tmp_path, monkeypatch):
+    from promux.cli import _refresh_token_file
+
+    monkeypatch.setenv("PROMUX_OAUTH_CLIENT_ID", "mock_client_id")
+    monkeypatch.setenv("PROMUX_OAUTH_CLIENT_SECRET", "mock_client_secret")
+
+    token_path = tmp_path / "test-token"
+    token_data = {
+        "token": {
+            "access_token": "old_token",
+            "refresh_token": "valid_refresh",
+            "expiry": "2020-01-01T00:00:00Z"
+        }
+    }
+    token_path.write_text(json.dumps(token_data))
+
+    class MockResponse:
+        def __init__(self, data):
+            self.data = data
+        def read(self):
+            return self.data
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    def mock_urlopen(req, timeout=10):
+        return MockResponse(json.dumps({
+            "access_token": "new_refreshed_token",
+            "expires_in": 3600
+        }).encode("utf-8"))
+
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+
+    new_token = _refresh_token_file(token_path, token_data)
+    assert new_token == "new_refreshed_token"
+
+    updated = json.loads(token_path.read_text())
+    assert updated["token"]["access_token"] == "new_refreshed_token"
+    assert "expiry" in updated["token"]
+
+
+def test_refresh_token_file_failures(tmp_path, monkeypatch):
+    from promux.cli import _refresh_token_file
+
+    monkeypatch.setenv("PROMUX_OAUTH_CLIENT_ID", "mock_id")
+    monkeypatch.setenv("PROMUX_OAUTH_CLIENT_SECRET", "mock_sec")
+
+    token_path = tmp_path / "test-token"
+
+    # Not a dict token
+    assert _refresh_token_file(token_path, {"token": "not-a-dict"}) is None
+
+    # Missing refresh_token
+    assert _refresh_token_file(token_path, {"token": {"access_token": "acc"}}) is None
+
+    # Missing credentials
+    monkeypatch.delenv("PROMUX_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("PROMUX_OAUTH_CLIENT_SECRET", raising=False)
+    assert _refresh_token_file(token_path, {"token": {"refresh_token": "ref"}}) is None
+
+    # Load from PROMUX_HOME/oauth.json
+    promux_home = tmp_path / ".promux"
+    promux_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PROMUX_HOME", str(promux_home))
+    (promux_home / "oauth.json").write_text(json.dumps({
+        "client_id": "cfg_id",
+        "client_secret": "cfg_secret"
+    }))
+
+    # URLError / network failure
+    def mock_urlopen_fail(req, timeout=10):
+        raise ConnectionError("Server down")
+
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_fail)
+    data = {"token": {"refresh_token": "ref_tok"}}
+    assert _refresh_token_file(token_path, data) is None
+
+
+
+def test_get_or_refresh_access_token_expired(tmp_path, monkeypatch):
+    from promux.cli import _get_or_refresh_access_token
+
+    token_path = tmp_path / "test-token"
+    past_expiry = "2020-01-01T00:00:00Z"
+    token_data = {
+        "token": {
+            "access_token": "expired_acc",
+            "refresh_token": "ref_tok",
+            "expiry": past_expiry
+        }
+    }
+    token_path.write_text(json.dumps(token_data))
+
+    # Mock refresh returns refreshed token
+    monkeypatch.setattr("promux.cli._refresh_token_file", lambda p, td: "refreshed_acc")
+
+    token = _get_or_refresh_access_token(token_path)
+    assert token == "refreshed_acc"
+
+
+def test_get_or_refresh_access_token_valid(tmp_path):
+    from promux.cli import _get_or_refresh_access_token
+
+    token_path = tmp_path / "test-token"
+    future_expiry = "2099-01-01T00:00:00Z"
+    token_data = {
+        "token": {
+            "access_token": "valid_acc",
+            "expiry": future_expiry
+        }
+    }
+    token_path.write_text(json.dumps(token_data))
+
+    token = _get_or_refresh_access_token(token_path)
+    assert token == "valid_acc"
+
+
+def test_cli_quota_401_refresh_retry(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+
+    assert main(["save", "demo", "--email", "demo@test.com"]) == 0
+    capsys.readouterr()
+
+    from promux.quota import QuotaClient
+
+    calls = {"count": 0}
+
+    def mock_load_metadata(self):
+        return {"project_id": "test-companion-proj", "plan_name": "Antigravity"}
+
+    def mock_get_quota(self, project_id):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise Exception("HTTP Error 401: Unauthorized")
+        return QuotaSummary(
+            gemini_5h_remaining=0.90,
+            gemini_weekly_remaining=0.70,
+            third_party_5h_remaining=0.50,
+            third_party_weekly_remaining=0.50,
+            gemini_5h_reset="2026-09-03T22:55:18Z",
+            third_party_5h_reset="2026-09-04T02:36:43Z",
+        )
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", mock_load_metadata)
+    monkeypatch.setattr(QuotaClient, "get_quota", mock_get_quota)
+    monkeypatch.setattr("promux.cli._refresh_token_file", lambda p, td: "new_token_401")
+
+    rc = main(["quota", "demo"])
+    assert rc == 0
+    assert calls["count"] == 2
+    out, _ = capsys.readouterr()
+    assert "Gemini" in out
+
+

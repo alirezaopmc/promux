@@ -5,11 +5,18 @@ import sys
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone, timedelta
+
 from .constants import (
     DEFAULT_POLL_SECONDS,
     DEFAULT_COOLDOWN_MINUTES,
     PROMUX_HOME,
     GEMINI_CLI_HOME,
+    OAUTH_TOKEN_URL,
+    OAUTH_CLIENT_ID,
+    OAUTH_CLIENT_SECRET,
 )
 from .failover import FailoverEngine
 from .models import AccountMeta, QuotaSummary, RotationResult
@@ -58,6 +65,85 @@ def _extract_expiry(token_data: Optional[Dict[str, Any]]) -> Optional[str]:
     if "expiry" in token_data:
         return token_data.get("expiry")
     return None
+
+
+def _get_oauth_credentials() -> tuple[str, str]:
+    """Retrieve OAuth client ID and secret from environment or ~/.promux/oauth.json."""
+    client_id = os.environ.get("PROMUX_OAUTH_CLIENT_ID", OAUTH_CLIENT_ID)
+    client_secret = os.environ.get("PROMUX_OAUTH_CLIENT_SECRET", OAUTH_CLIENT_SECRET)
+    if not client_id or not client_secret:
+        cfg_file = PROMUX_HOME / "oauth.json"
+        if cfg_file.exists():
+            try:
+                with open(cfg_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    client_id = client_id or data.get("client_id", "")
+                    client_secret = client_secret or data.get("client_secret", "")
+            except Exception:
+                pass
+    return client_id, client_secret
+
+
+def _refresh_token_file(token_path: Path, token_data: Dict[str, Any]) -> Optional[str]:
+    """Attempt to refresh an expired token using its refresh_token."""
+    tok = token_data.get("token")
+    if not isinstance(tok, dict):
+        return None
+    refresh_token = tok.get("refresh_token")
+    if not refresh_token:
+        return None
+    client_id, client_secret = _get_oauth_credentials()
+    if not client_id or not client_secret:
+        return None
+    try:
+        data = urllib.parse.urlencode({
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token"
+        }).encode("utf-8")
+
+        req = urllib.request.Request(OAUTH_TOKEN_URL, data=data, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+        new_acc = res.get("access_token")
+        if new_acc:
+            tok["access_token"] = new_acc
+            expires_in = res.get("expires_in", 3600)
+            now = datetime.now(timezone.utc)
+            tok["expiry"] = (now + timedelta(seconds=expires_in)).isoformat().replace("+00:00", "Z")
+            tmp_path = token_path.with_suffix(".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(token_data, f, indent=2)
+            tmp_path.chmod(0o600)
+            os.replace(tmp_path, token_path)
+            return new_acc
+    except Exception:
+        pass
+    return None
+
+
+def _get_or_refresh_access_token(token_path: Path) -> Optional[str]:
+    """Get access token, refreshing it if expired and refresh_token is present."""
+    token_data = _read_token_data(token_path)
+    if not token_data:
+        return None
+    access_token = _extract_access_token(token_data)
+    expiry_str = _extract_expiry(token_data)
+    is_expired = False
+    if expiry_str:
+        try:
+            clean_exp = expiry_str.replace("Z", "").split("+")[0]
+            exp_dt = datetime.fromisoformat(clean_exp).replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) >= exp_dt:
+                is_expired = True
+        except Exception:
+            pass
+    if is_expired:
+        refreshed = _refresh_token_file(token_path, token_data)
+        if refreshed:
+            return refreshed
+    return access_token
 
 
 def cmd_list(storage: StorageEngine, json_out: bool) -> int:
@@ -112,7 +198,7 @@ def cmd_save(storage: StorageEngine, name: str, email: Optional[str], json_out: 
     plan_type = "STANDARD"
 
     token_data = _read_token_data(storage.live_token)
-    access_token = _extract_access_token(token_data)
+    access_token = _get_or_refresh_access_token(storage.live_token)
 
     if access_token:
         client = QuotaClient(token=access_token)
@@ -260,7 +346,9 @@ def cmd_quota(storage: StorageEngine, name: Optional[str], json_out: bool) -> in
         token_path = storage.accounts_dir / target_name / "antigravity-oauth-token"
 
     token_data = _read_token_data(token_path)
-    access_token = _extract_access_token(token_data)
+    access_token = _get_or_refresh_access_token(token_path)
+    if not access_token:
+        access_token = _extract_access_token(token_data)
     if not access_token:
         msg = f"Could not extract access token for account '{target_name}'."
         if json_out:
@@ -296,11 +384,31 @@ def cmd_quota(storage: StorageEngine, name: Optional[str], json_out: bool) -> in
     try:
         qs = client.get_quota(project_id)
     except Exception as e:
-        msg = f"Error retrieving quota: {e}"
-        if json_out:
-            print(json.dumps({"error": msg}, indent=2))
-        print(f"Error: {msg}", file=sys.stderr)
-        return 1
+        if "401" in str(e):
+            td = _read_token_data(token_path)
+            refreshed = _refresh_token_file(token_path, td) if td else None
+            if refreshed:
+                client.token = refreshed
+                try:
+                    qs = client.get_quota(project_id)
+                except Exception as retry_e:
+                    msg = f"Error retrieving quota: {retry_e}"
+                    if json_out:
+                        print(json.dumps({"error": msg}, indent=2))
+                    print(f"Error: {msg}", file=sys.stderr)
+                    return 1
+            else:
+                msg = f"Error retrieving quota: {e}"
+                if json_out:
+                    print(json.dumps({"error": msg}, indent=2))
+                print(f"Error: {msg}", file=sys.stderr)
+                return 1
+        else:
+            msg = f"Error retrieving quota: {e}"
+            if json_out:
+                print(json.dumps({"error": msg}, indent=2))
+            print(f"Error: {msg}", file=sys.stderr)
+            return 1
 
     if json_out:
         res = {
