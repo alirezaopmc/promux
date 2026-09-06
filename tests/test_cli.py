@@ -579,3 +579,25 @@ def test_cli_quota_401_refresh_retry(tmp_path, sample_token_dict, monkeypatch, c
     assert "Gemini" in out
 
 
+def test_cli_completion_bash(capsys):
+    rc = main(["completion", "bash"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    assert "_promux_completion" in out
+
+
+def test_cli_completion_zsh(capsys):
+    rc = main(["completion", "zsh"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    assert "#compdef promux" in out
+
+
+def test_cli_completion_invalid_shell(capsys):
+    rc = main(["completion", "fish"])
+    assert rc == 2
+    out, err = capsys.readouterr()
+    assert "invalid choice" in (out + err).lower()
+
+
+

@@ -57,6 +57,17 @@ Operating as a zero-intrusion filesystem overlay, `promux` keeps your active con
 - Python 3.10 or higher
 - Antigravity CLI (`agy`) installed
 
+### Recommended: Install via pipx
+For an isolated CLI installation that is automatically linked into your `$PATH`:
+```bash
+pipx install promux
+```
+
+Or install directly from the Git repository:
+```bash
+pipx install git+https://github.com/alirezaopmc/promux.git
+```
+
 ### Install in Editable Mode
 ```bash
 pip install -e . --break-system-packages
@@ -207,6 +218,27 @@ Starts the reactive log-tailing daemon. Tails `~/.gemini/antigravity-cli/cli.log
 ```bash
 promux watch
 promux watch --poll-seconds 0.5 --cooldown 60
+```
+
+### `promux completion <shell>`
+Generate shell auto-completion script for `bash` or `zsh`.
+
+#### Quick Setup:
+```bash
+# In ~/.bashrc
+eval "$(promux completion bash)"
+
+# In ~/.zshrc
+eval "$(promux completion zsh)"
+```
+
+Alternatively, you can write the completion script to your shell's completion directory:
+```bash
+# Bash (system-wide or user completion dir)
+promux completion bash | sudo tee /etc/bash_completion.d/promux > /dev/null
+
+# Zsh (using site-functions or fpath directory)
+promux completion zsh > ~/.zfunc/_promux
 ```
 
 ---

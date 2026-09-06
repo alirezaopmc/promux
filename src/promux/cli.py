@@ -18,6 +18,11 @@ from .constants import (
     OAUTH_CLIENT_ID,
     OAUTH_CLIENT_SECRET,
 )
+from .completion import (
+    generate_bash_completion,
+    generate_zsh_completion,
+    SUPPORTED_SHELLS,
+)
 from .failover import FailoverEngine
 from .models import AccountMeta, QuotaSummary, RotationResult
 from .quota import QuotaClient
@@ -477,6 +482,16 @@ def cmd_watch(failover: FailoverEngine, poll_seconds: float, cooldown: Optional[
     return 0
 
 
+def cmd_completion(shell: str) -> int:
+    if shell == "bash":
+        print(generate_bash_completion(), end="")
+        return 0
+    elif shell == "zsh":
+        print(generate_zsh_completion(), end="")
+        return 0
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     common_parser = argparse.ArgumentParser(add_help=False)
     common_parser.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Output in JSON format")
@@ -522,6 +537,10 @@ def build_parser() -> argparse.ArgumentParser:
     watch_p.add_argument("--poll-seconds", type=float, default=DEFAULT_POLL_SECONDS, help=f"Log polling interval in seconds (default: {DEFAULT_POLL_SECONDS})")
     watch_p.add_argument("--cooldown", type=int, default=None, help="Cooldown override in minutes (default: auto-detected from log hints)")
 
+    # completion
+    p_comp = sub.add_parser("completion", help="Generate shell auto-completion script")
+    p_comp.add_argument("shell", choices=SUPPORTED_SHELLS, help="Target shell (bash or zsh)")
+
     return parser
 
 
@@ -557,6 +576,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             return cmd_remove(storage, args.name, json_out)
         elif args.command == "watch":
             return cmd_watch(failover, args.poll_seconds, args.cooldown)
+        elif args.command == "completion":
+            return cmd_completion(args.shell)
         else:
             parser.print_help(file=sys.stderr)
             return 2

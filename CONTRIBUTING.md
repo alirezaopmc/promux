@@ -43,6 +43,21 @@ pytest tests/test_quota.py -v
 pytest tests/test_failover.py -v
 pytest tests/test_watch.py -v
 pytest tests/test_cli.py -v
+pytest tests/test_completion.py -v
+```
+
+### Testing Shell Completion
+
+When making changes to completion scripts or CLI commands, verify shell completions:
+```bash
+# Run unit tests for completion generation and CLI command dispatch
+pytest tests/test_completion.py tests/test_cli.py -k "completion" -v
+
+# Validate bash script syntax
+bash -n <(python3 -m promux.cli completion bash)
+
+# Validate zsh script syntax (if zsh is available)
+zsh -n <(python3 -m promux.cli completion zsh)
 ```
 
 Before submitting a pull request, ensure all tests pass with zero warnings or failures.
