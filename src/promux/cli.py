@@ -631,7 +631,10 @@ def build_parser() -> argparse.ArgumentParser:
     # quota
     quota_p = sub.add_parser("quota", parents=[common_parser], help="Check Cloud Code Assist quota")
     quota_p.add_argument(
-        "name", nargs="?", default=None, help="Profile name (default: active profile)"
+        "name",
+        nargs="?",
+        default=None,
+        help="Profile name (default: all profiles in vault)",
     )
 
     # whoami

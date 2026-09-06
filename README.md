@@ -129,20 +129,32 @@ ACTIVE  NAME              STATE       EMAIL                           COOLDOWN  
 ```
 
 ### 4. Check Real Quota Status
-Query live Cloud Code Assist quota buckets (5-hour and weekly windows) for Gemini and 3rd-party (Claude/GPT) models:
+Query live Cloud Code Assist quota buckets (5-hour and weekly windows) across all accounts in your vault simultaneously:
 ```bash
 promux quota
 ```
 Output:
 ```
-Quota for account 'main' (project: aicode-consumers):
+ACTIVE  PROFILE           GEMINI (5H)   GEMINI (WK)   CLAUDE (5H)   CLAUDE (WK)   NEXT RESET (UTC)
+---------------------------------------------------------------------------------------------------
+*       main              96.1%         82.0%         100.0%        31.7%         16:58:03
+        backup1           100.0%        95.0%         80.0%         60.0%         17:30:00
+```
+
+To view the detailed model group breakdown and exact reset timestamps for an individual account, specify the profile name:
+```bash
+promux quota main
+```
+Output:
+```
+Quota for account 'main' (project: aicode-consumers) [ACTIVE]:
 
 MODEL GROUP              WINDOW     REMAINING    RESET TIME
 ----------------------------------------------------------------------
-Gemini Models            5h         85.0%        2026-09-03T22:55:18Z
-Gemini Models            weekly     57.3%        2026-09-08T17:46:10Z
-Claude & GPT Models      5h         0.0%         2026-09-04T02:36:43Z
-Claude & GPT Models      weekly     31.7%        2026-09-09T01:11:22Z
+Gemini Models            5h         96.1%        2026-09-06T16:58:03Z
+Gemini Models            weekly     82.0%        2026-09-13T10:15:00Z
+Claude & GPT Models      5h         100.0%       -
+Claude & GPT Models      weekly     31.7%        2026-09-13T10:15:00Z
 ```
 
 ### 5. Manually Switch Profiles
@@ -189,12 +201,22 @@ promux next --reason "manual rotation" --cooldown 120
 ```
 
 ### `promux quota [name]`
-Queries Google Cloud Code Assist for live quota fractions and reset timestamps. If `name` is omitted, the active profile is checked.
+Queries Google Cloud Code Assist for live quota fractions and reset timestamps.
+- **Default (no profile name):** Displays an overview matrix table comparing 5-hour and weekly remaining quotas across all accounts in the vault.
+- **Single profile (`promux quota <name>`):** Displays detailed model group views (Gemini vs Claude & GPT across 5-hour and weekly windows) with full reset timestamps.
 
 ```bash
+# Multi-profile overview table
 promux quota
-promux quota backup1
+
+# Multi-profile overview JSON array
 promux quota --json
+
+# Single-account detailed breakdown
+promux quota backup1
+
+# Single-account detailed JSON object
+promux quota backup1 --json
 ```
 
 ### `promux whoami`
