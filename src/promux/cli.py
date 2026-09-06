@@ -22,7 +22,7 @@ from .constants import (
     PROMUX_HOME,
 )
 from .failover import FailoverEngine
-from .models import AccountMeta
+from .models import AccountMeta, QuotaSummary
 from .quota import QuotaClient
 from .storage import StorageEngine
 from .watch import LogMatch, LogWatcher
@@ -336,6 +336,68 @@ def cmd_remove(storage: StorageEngine, name: str, json_out: bool) -> int:
             print(json.dumps({"success": False, "error": f"Account '{name}' not found"}, indent=2))
         print(f"Error: Account '{name}' not found", file=sys.stderr)
         return 1
+
+
+def _fetch_account_quota(
+    storage: StorageEngine,
+    target_name: str,
+) -> tuple[QuotaSummary | None, str | None, str | None]:
+    """Fetch quota for an account, handling token resolution, refresh, and project ID discovery.
+
+    Returns:
+        tuple of (QuotaSummary or None, project_id or None, error_message or None)
+    """
+    acct = storage.get_account(target_name)
+    if not acct:
+        return None, None, f"Account '{target_name}' not found in vault."
+
+    # Locate token file
+    if target_name == storage.get_active_profile() and storage.live_token.exists():
+        token_path = storage.live_token
+    else:
+        token_path = storage.accounts_dir / target_name / "antigravity-oauth-token"
+
+    token_data = _read_token_data(token_path)
+    access_token = _get_or_refresh_access_token(token_path)
+    if not access_token:
+        access_token = _extract_access_token(token_data)
+    if not access_token:
+        return None, None, f"Could not extract access token for account '{target_name}'."
+
+    client = QuotaClient(token=access_token)
+    project_id = acct.project_id
+    if not project_id:
+        try:
+            meta = client.load_metadata()
+            project_id = meta.get("project_id")
+            if project_id:
+                state = storage.load_state()
+                if target_name in state.get("accounts", {}):
+                    state["accounts"][target_name]["project_id"] = project_id
+                    storage.save_state(state)
+        except Exception as e:
+            return None, None, f"Failed to load project metadata for '{target_name}': {e}"
+
+    if not project_id:
+        return None, None, f"Could not determine project ID for account '{target_name}'."
+
+    try:
+        qs = client.get_quota(project_id)
+        return qs, project_id, None
+    except Exception as e:
+        if "401" in str(e):
+            td = _read_token_data(token_path)
+            refreshed = _refresh_token_file(token_path, td) if td else None
+            if refreshed:
+                client.token = refreshed
+                try:
+                    qs = client.get_quota(project_id)
+                    return qs, project_id, None
+                except Exception as retry_e:
+                    return None, project_id, f"Error retrieving quota: {retry_e}"
+            else:
+                return None, project_id, f"Authentication failed (401): {e}"
+        return None, project_id, f"Error retrieving quota: {e}"
 
 
 def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:

@@ -589,3 +589,97 @@ def test_cli_completion_invalid_shell(capsys):
     assert rc == 2
     out, err = capsys.readouterr()
     assert "invalid choice" in (out + err).lower()
+
+
+def test_fetch_account_quota_success(tmp_path, sample_token_dict, monkeypatch):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import _fetch_account_quota, get_storage, main
+    from promux.quota import QuotaClient
+
+    main(["save", "testacc", "--email", "test@test.com"])
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda self: {"project_id": "proj-123"})
+    monkeypatch.setattr(QuotaClient, "get_quota", lambda self, pid: QuotaSummary(
+        gemini_5h_remaining=0.95,
+        gemini_weekly_remaining=0.80,
+        third_party_5h_remaining=1.0,
+        third_party_weekly_remaining=0.40,
+        gemini_5h_reset="2026-09-06T18:00:00Z",
+    ))
+
+    storage = get_storage()
+    qs, pid, err = _fetch_account_quota(storage, "testacc")
+    assert err is None
+    assert pid == "proj-123"
+    assert qs is not None
+    assert qs.gemini_5h_remaining == 0.95
+
+
+def test_fetch_account_quota_nonexistent(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    from promux.cli import _fetch_account_quota, get_storage
+
+    storage = get_storage()
+    qs, pid, err = _fetch_account_quota(storage, "nonexistent")
+    assert qs is None
+    assert err is not None
+    assert "not found" in err.lower()
+
+
+def test_fetch_account_quota_401_retry_success(tmp_path, sample_token_dict, monkeypatch):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import _fetch_account_quota, get_storage, main
+    from promux.quota import QuotaClient
+
+    main(["save", "testacc", "--email", "test@test.com"])
+
+    calls = {"count": 0}
+
+    def mock_load_metadata(self):
+        return {"project_id": "proj-401"}
+
+    def mock_get_quota(self, pid):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise Exception("HTTP Error 401: Unauthorized")
+        return QuotaSummary(
+            gemini_5h_remaining=0.85,
+            gemini_weekly_remaining=0.75,
+            third_party_5h_remaining=0.90,
+            third_party_weekly_remaining=0.60,
+        )
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", mock_load_metadata)
+    monkeypatch.setattr(QuotaClient, "get_quota", mock_get_quota)
+    monkeypatch.setattr("promux.cli._refresh_token_file", lambda p, td: "new_token_401")
+
+    storage = get_storage()
+    qs, pid, err = _fetch_account_quota(storage, "testacc")
+    assert err is None
+    assert pid == "proj-401"
+    assert qs is not None
+    assert qs.gemini_5h_remaining == 0.85
+    assert calls["count"] == 2
+
+
+def test_fetch_account_quota_401_refresh_failure(tmp_path, sample_token_dict, monkeypatch):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import _fetch_account_quota, get_storage, main
+    from promux.quota import QuotaClient
+
+    main(["save", "testacc", "--email", "test@test.com"])
+
+    def mock_get_quota(self, pid):
+        raise Exception("HTTP Error 401: Unauthorized")
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda self: {"project_id": "proj-401"})
+    monkeypatch.setattr(QuotaClient, "get_quota", mock_get_quota)
+    monkeypatch.setattr("promux.cli._refresh_token_file", lambda p, td: None)
+
+    storage = get_storage()
+    qs, pid, err = _fetch_account_quota(storage, "testacc")
+    assert qs is None
+    assert pid == "proj-401"
+    assert err is not None
+    assert "401" in err
+
