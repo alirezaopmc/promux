@@ -10,14 +10,29 @@ readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Alireza Opmc"}]
 requires-python = ">=3.10"
+keywords = ["antigravity", "gemini", "cli", "failover", "profile-switcher", "quota-management"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Systems Administration",
 ]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/alirezaopmc/promux"
+Repository = "https://github.com/alirezaopmc/promux.git"
+Issues = "https://github.com/alirezaopmc/promux/issues"
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-mock"]
@@ -28,6 +43,10 @@ promux = "promux.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+promux = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+

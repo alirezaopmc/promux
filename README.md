@@ -1,8 +1,14 @@
 # Promux
 
+[![CI](https://github.com/alirezaopmc/promux/actions/workflows/ci.yml/badge.svg)](https://github.com/alirezaopmc/promux/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Code Style: PEP 8](https://img.shields.io/badge/code%20style-PEP%208-green.svg)](https://www.python.org/dev/peps/pep-0008/)
+
 Antigravity CLI profile multiplexer and automated quota failover daemon.
 
 `promux` provides isolated multi-account profile switching and automated quota failover (`429 RESOURCE_EXHAUSTED`) for the Antigravity CLI (`agy`).
+
 
 Operating as a zero-intrusion filesystem overlay, `promux` keeps your active conversation context, session history, memory, and project artifacts completely intact while dynamically hot-swapping authentication tokens and tracking Cloud Code Assist API quotas.
 
@@ -295,6 +301,20 @@ pytest tests/test_cli.py -v
 
 ---
 
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, coding conventions, and pull request workflows.
+Please also review our [Code of Conduct](CODE_OF_CONDUCT.md).
+
+---
+
+## Security
+
+To report security vulnerabilities or concerns regarding credential and token handling, please see our [Security Policy](SECURITY.md).
+
+---
+
 ## License
 
-MIT
+This project is licensed under the terms of the [MIT License](LICENSE).
+
