@@ -1,28 +1,28 @@
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Callable, Dict, Any
+from typing import Any
 
 from .constants import (
     CLI_LOG,
-    LOG_DIR,
-    DEFAULT_POLL_SECONDS,
     DEFAULT_COOLDOWN_MINUTES,
+    DEFAULT_POLL_SECONDS,
     INDIVIDUAL_QUOTA_RE,
+    LOG_DIR,
+    RESET_HINT_RE,
     RESOURCE_EXHAUSTED_RE,
     WEEKLY_QUOTA_RE,
-    RESET_HINT_RE,
 )
-from .failover import FailoverEngine
 
 
 @dataclass
 class LogMatch:
     pattern: str
     line: str
-    reset_hint: Optional[str] = None
-    file_path: Optional[str] = None
+    reset_hint: str | None = None
+    file_path: str | None = None
 
 
 class LogWatcher:
@@ -35,28 +35,29 @@ class LogWatcher:
     def __init__(
         self,
         failover: Any,
-        log_files: Optional[List[Path]] = None,
+        log_files: list[Path] | None = None,
         poll_seconds: float = DEFAULT_POLL_SECONDS,
-        gemini_home: Optional[Path] = None,
+        gemini_home: Path | None = None,
     ):
         self.failover = failover
         self._custom_log_files = log_files
         self.poll_seconds = poll_seconds
         self.gemini_home = Path(gemini_home) if gemini_home else None
-        self.offsets: Dict[Path, int] = {}
-        self.inodes: Dict[Path, int] = {}
+        self.offsets: dict[Path, int] = {}
+        self.inodes: dict[Path, int] = {}
         self.running = False
 
-    def get_log_files(self) -> List[Path]:
+    def get_log_files(self) -> list[Path]:
         if self._custom_log_files is not None:
             return [p for p in self._custom_log_files if p.exists()]
-        files: List[Path] = []
+        files: list[Path] = []
         cli_log = (self.gemini_home / "cli.log") if self.gemini_home else CLI_LOG
         log_dir = (self.gemini_home / "log") if self.gemini_home else LOG_DIR
 
         if cli_log.exists():
             files.append(cli_log)
         if log_dir.exists():
+
             def _mtime(p: Path) -> float:
                 try:
                     return p.stat().st_mtime
@@ -67,7 +68,7 @@ class LogWatcher:
             files.extend(sorted(log_files, key=_mtime, reverse=True)[:5])
         return list(dict.fromkeys(files))
 
-    def init_offsets(self):
+    def init_offsets(self) -> None:
         for f in self.get_log_files():
             try:
                 st = f.stat()
@@ -76,7 +77,7 @@ class LogWatcher:
             except OSError:
                 self.offsets[f] = 0
 
-    def parse_reset_minutes(self, hint: Optional[str]) -> int:
+    def parse_reset_minutes(self, hint: str | None) -> int:
         if not hint:
             return DEFAULT_COOLDOWN_MINUTES
         hint = hint.strip().lower().lstrip("~").strip()
@@ -89,11 +90,11 @@ class LogWatcher:
         total = days * 1440 + hours * 60 + mins
         return total if total > 0 else DEFAULT_COOLDOWN_MINUTES
 
-    def stop(self):
+    def stop(self) -> None:
         self.running = False
 
-    def run_once(self) -> List[LogMatch]:
-        matches: List[LogMatch] = []
+    def run_once(self) -> list[LogMatch]:
+        matches: list[LogMatch] = []
         for path in self.get_log_files():
             prev_offset = self.offsets.get(path, 0)
             try:
@@ -114,7 +115,7 @@ class LogWatcher:
                 if size == prev_offset:
                     continue
 
-                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                with open(path, encoding="utf-8", errors="replace") as f:
                     f.seek(prev_offset)
                     new_lines = f.readlines()
                     self.offsets[path] = f.tell()
@@ -143,10 +144,10 @@ class LogWatcher:
 
     def run_forever(
         self,
-        on_match: Optional[Callable[[LogMatch], None]] = None,
-        cooldown_minutes: Optional[int] = None,
-        max_iterations: Optional[int] = None,
-    ):
+        on_match: Callable[[LogMatch], None] | None = None,
+        cooldown_minutes: int | None = None,
+        max_iterations: int | None = None,
+    ) -> None:
         self.running = True
         if not self.offsets:
             self.init_offsets()
@@ -161,8 +162,14 @@ class LogWatcher:
                 for m in matches:
                     if on_match:
                         on_match(m)
-                    cool = cooldown_minutes if cooldown_minutes is not None else self.parse_reset_minutes(m.reset_hint)
-                    self.failover.rotate_next(reason=f"reactive: {m.pattern}", cooldown_minutes=cool)
+                    cool = (
+                        cooldown_minutes
+                        if cooldown_minutes is not None
+                        else self.parse_reset_minutes(m.reset_hint)
+                    )
+                    self.failover.rotate_next(
+                        reason=f"reactive: {m.pattern}", cooldown_minutes=cool
+                    )
                     break
                 if not self.running:
                     break

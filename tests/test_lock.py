@@ -1,7 +1,9 @@
 import time
-import pytest
-from pathlib import Path
 from multiprocessing import Process, Queue
+from pathlib import Path
+
+import pytest
+
 from promux.lock import file_lock
 
 

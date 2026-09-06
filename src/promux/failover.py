@@ -1,6 +1,8 @@
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Any
+from typing import Any
+
 from .constants import DEFAULT_COOLDOWN_MINUTES
 from .models import AccountMeta, AccountState, RotationResult
 from .storage import StorageEngine
@@ -10,9 +12,9 @@ class FailoverEngine:
     def __init__(self, storage: StorageEngine):
         self.storage = storage
 
-    def get_eligible_standby(self, exclude: Optional[str] = None) -> List[AccountMeta]:
+    def get_eligible_standby(self, exclude: str | None = None) -> list[AccountMeta]:
         state = self.storage.load_state()
-        eligible: List[AccountMeta] = []
+        eligible: list[AccountMeta] = []
         for name, data in state.get("accounts", {}).items():
             if name == exclude:
                 continue
@@ -32,16 +34,18 @@ class FailoverEngine:
         eligible.sort(key=_sort_key)
         return eligible
 
-    def apply_cooldown(self, name: str, minutes: int = DEFAULT_COOLDOWN_MINUTES):
+    def apply_cooldown(self, name: str, minutes: int = DEFAULT_COOLDOWN_MINUTES) -> None:
         tx_func = getattr(self.storage, "transaction", None)
         if callable(tx_func):
             cm = self.storage.transaction()
         else:
+
             @contextmanager
-            def _fallback_tx():
+            def _fallback_tx() -> Generator[dict[str, Any], None, None]:
                 s = self.storage.load_state()
                 yield s
                 self.storage.save_state(s)
+
             cm = _fallback_tx()
 
         with cm as state:
@@ -58,11 +62,13 @@ class FailoverEngine:
         if callable(tx_func):
             cm = self.storage.transaction()
         else:
+
             @contextmanager
-            def _fallback_tx():
+            def _fallback_tx() -> Generator[dict[str, Any], None, None]:
                 s = self.storage.load_state()
                 yield s
                 self.storage.save_state(s)
+
             cm = _fallback_tx()
 
         with cm as state:

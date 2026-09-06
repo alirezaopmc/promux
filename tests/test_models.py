@@ -1,24 +1,25 @@
 from datetime import datetime, timedelta, timezone
-from promux.models import AccountMeta, AccountState, QuotaBucket, QuotaSummary, RotationResult
+
 from promux.constants import (
-    INDIVIDUAL_QUOTA_RE,
-    RESOURCE_EXHAUSTED_RE,
-    WEEKLY_QUOTA_RE,
-    RESET_HINT_RE,
-    DEFAULT_POLL_SECONDS,
-    DEFAULT_COOLDOWN_MINUTES,
-    DEFAULT_LOCK_TIMEOUT,
-    DEFAULT_HTTP_TIMEOUT,
-    CODE_ASSIST_BASE_URL,
-    LOAD_ENDPOINT,
-    QUOTA_ENDPOINT,
-    USERINFO_URL,
-    USER_AGENT,
-    PROMUX_HOME,
     ACCOUNTS_DIR,
-    STATE_FILE,
+    CODE_ASSIST_BASE_URL,
+    DEFAULT_COOLDOWN_MINUTES,
+    DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_LOCK_TIMEOUT,
+    DEFAULT_POLL_SECONDS,
+    INDIVIDUAL_QUOTA_RE,
+    LOAD_ENDPOINT,
     LOCK_FILE,
+    PROMUX_HOME,
+    QUOTA_ENDPOINT,
+    RESET_HINT_RE,
+    RESOURCE_EXHAUSTED_RE,
+    STATE_FILE,
+    USER_AGENT,
+    USERINFO_URL,
+    WEEKLY_QUOTA_RE,
 )
+from promux.models import AccountMeta, AccountState, QuotaBucket, QuotaSummary, RotationResult
 
 
 def test_account_state_computation():
@@ -29,11 +30,15 @@ def test_account_state_computation():
     assert disabled_acct.state == AccountState.DISABLED
 
     # Cooldown (naive datetime)
-    cool_acct = AccountMeta(name="work", enabled=True, cooldown_until=now_naive + timedelta(minutes=30))
+    cool_acct = AccountMeta(
+        name="work", enabled=True, cooldown_until=now_naive + timedelta(minutes=30)
+    )
     assert cool_acct.state == AccountState.COOLDOWN
 
     # Standby (cooldown expired)
-    standby_acct = AccountMeta(name="work", enabled=True, cooldown_until=now_naive - timedelta(minutes=10))
+    standby_acct = AccountMeta(
+        name="work", enabled=True, cooldown_until=now_naive - timedelta(minutes=10)
+    )
     assert standby_acct.state == AccountState.STANDBY
 
     # Standby (no cooldown set)
@@ -41,7 +46,9 @@ def test_account_state_computation():
     assert standby_no_cool.state == AccountState.STANDBY
 
     # Cooldown with timezone-aware datetime
-    cool_tz_acct = AccountMeta(name="work", enabled=True, cooldown_until=now_utc + timedelta(minutes=30))
+    cool_tz_acct = AccountMeta(
+        name="work", enabled=True, cooldown_until=now_utc + timedelta(minutes=30)
+    )
     assert cool_tz_acct.state == AccountState.COOLDOWN
 
 

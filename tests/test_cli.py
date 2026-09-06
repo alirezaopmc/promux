@@ -1,9 +1,7 @@
 import json
-import pytest
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+
 from promux.cli import main
-from promux.models import QuotaSummary, AccountMeta, RotationResult
+from promux.models import QuotaSummary
 
 
 def _setup_env(tmp_path, monkeypatch, sample_token_dict=None):
@@ -403,16 +401,18 @@ def test_cli_json_flag_before_subcommand(tmp_path, sample_token_dict, monkeypatc
 def test_cli_watch_on_match_callback(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
 
-    from promux.watch import LogWatcher, LogMatch
+    from promux.watch import LogMatch, LogWatcher
 
     def mock_run_forever(self, on_match=None, cooldown_minutes=None, max_iterations=None):
         if on_match:
-            on_match(LogMatch(
-                pattern="RESOURCE_EXHAUSTED",
-                line="RESOURCE_EXHAUSTED (code 429)",
-                reset_hint="30m",
-                file_path="/tmp/cli.log",
-            ))
+            on_match(
+                LogMatch(
+                    pattern="RESOURCE_EXHAUSTED",
+                    line="RESOURCE_EXHAUSTED (code 429)",
+                    reset_hint="30m",
+                    file_path="/tmp/cli.log",
+                )
+            )
 
     monkeypatch.setattr(LogWatcher, "run_forever", mock_run_forever)
 
@@ -435,7 +435,7 @@ def test_refresh_token_file_success(tmp_path, monkeypatch):
         "token": {
             "access_token": "old_token",
             "refresh_token": "valid_refresh",
-            "expiry": "2020-01-01T00:00:00Z"
+            "expiry": "2020-01-01T00:00:00Z",
         }
     }
     token_path.write_text(json.dumps(token_data))
@@ -443,18 +443,20 @@ def test_refresh_token_file_success(tmp_path, monkeypatch):
     class MockResponse:
         def __init__(self, data):
             self.data = data
+
         def read(self):
             return self.data
+
         def __enter__(self):
             return self
+
         def __exit__(self, *args):
             pass
 
     def mock_urlopen(req, timeout=10):
-        return MockResponse(json.dumps({
-            "access_token": "new_refreshed_token",
-            "expires_in": 3600
-        }).encode("utf-8"))
+        return MockResponse(
+            json.dumps({"access_token": "new_refreshed_token", "expires_in": 3600}).encode("utf-8")
+        )
 
     monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
 
@@ -489,10 +491,9 @@ def test_refresh_token_file_failures(tmp_path, monkeypatch):
     promux_home = tmp_path / ".promux"
     promux_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("PROMUX_HOME", str(promux_home))
-    (promux_home / "oauth.json").write_text(json.dumps({
-        "client_id": "cfg_id",
-        "client_secret": "cfg_secret"
-    }))
+    (promux_home / "oauth.json").write_text(
+        json.dumps({"client_id": "cfg_id", "client_secret": "cfg_secret"})
+    )
 
     # URLError / network failure
     def mock_urlopen_fail(req, timeout=10):
@@ -503,18 +504,13 @@ def test_refresh_token_file_failures(tmp_path, monkeypatch):
     assert _refresh_token_file(token_path, data) is None
 
 
-
 def test_get_or_refresh_access_token_expired(tmp_path, monkeypatch):
     from promux.cli import _get_or_refresh_access_token
 
     token_path = tmp_path / "test-token"
     past_expiry = "2020-01-01T00:00:00Z"
     token_data = {
-        "token": {
-            "access_token": "expired_acc",
-            "refresh_token": "ref_tok",
-            "expiry": past_expiry
-        }
+        "token": {"access_token": "expired_acc", "refresh_token": "ref_tok", "expiry": past_expiry}
     }
     token_path.write_text(json.dumps(token_data))
 
@@ -530,12 +526,7 @@ def test_get_or_refresh_access_token_valid(tmp_path):
 
     token_path = tmp_path / "test-token"
     future_expiry = "2099-01-01T00:00:00Z"
-    token_data = {
-        "token": {
-            "access_token": "valid_acc",
-            "expiry": future_expiry
-        }
-    }
+    token_data = {"token": {"access_token": "valid_acc", "expiry": future_expiry}}
     token_path.write_text(json.dumps(token_data))
 
     token = _get_or_refresh_access_token(token_path)
@@ -598,6 +589,3 @@ def test_cli_completion_invalid_shell(capsys):
     assert rc == 2
     out, err = capsys.readouterr()
     assert "invalid choice" in (out + err).lower()
-
-
-

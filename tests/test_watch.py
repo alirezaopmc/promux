@@ -1,8 +1,5 @@
-import time
-from pathlib import Path
-import pytest
-from promux.watch import LogWatcher, LogMatch
 from promux.models import RotationResult
+from promux.watch import LogMatch, LogWatcher
 
 
 class FakeFailover:
@@ -296,4 +293,3 @@ def test_log_watcher_dynamic_log_discovery(tmp_path):
 
     # On next poll loop, it is discovered dynamically!
     assert cli_log in watcher.get_log_files()
-

@@ -1,15 +1,15 @@
 import json
 import urllib.error
 import urllib.request
-from typing import Dict, Any, Optional
+from typing import Any
+
 from .constants import (
-    CODE_ASSIST_BASE_URL,
+    DEFAULT_HTTP_TIMEOUT,
     FALLBACK_CODE_ASSIST_BASE_URL,
     LOAD_ENDPOINT,
     QUOTA_ENDPOINT,
-    USERINFO_URL,
     USER_AGENT,
-    DEFAULT_HTTP_TIMEOUT,
+    USERINFO_URL,
     detect_code_assist_url,
 )
 from .models import QuotaSummary
@@ -19,16 +19,13 @@ class QuotaClient:
     """Client for Cloud Code Assist and Google UserInfo REST endpoints."""
 
     def __init__(
-        self,
-        token: str,
-        base_url: Optional[str] = None,
-        timeout: float = DEFAULT_HTTP_TIMEOUT
+        self, token: str, base_url: str | None = None, timeout: float = DEFAULT_HTTP_TIMEOUT
     ):
         self.token = token
         self.base_url = (base_url or detect_code_assist_url()).rstrip("/")
         self.timeout = timeout
 
-    def _post(self, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")
         headers = {
             "Authorization": f"Bearer {self.token}",
@@ -50,7 +47,8 @@ class QuotaClient:
             )
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    return json.loads(resp.read().decode("utf-8"))
+                    data = json.loads(resp.read().decode("utf-8"))
+                    return data if isinstance(data, dict) else {}
             except (urllib.error.HTTPError, urllib.error.URLError, OSError) as e:
                 last_error = e
                 continue
@@ -58,7 +56,7 @@ class QuotaClient:
             raise last_error
         return {}
 
-    def _get(self, url: str) -> Dict[str, Any]:
+    def _get(self, url: str) -> dict[str, Any]:
         req = urllib.request.Request(
             url,
             headers={
@@ -68,9 +66,10 @@ class QuotaClient:
             method="GET",
         )
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            data = json.loads(resp.read().decode("utf-8"))
+            return data if isinstance(data, dict) else {}
 
-    def fetch_email(self) -> Optional[str]:
+    def fetch_email(self) -> str | None:
         """Fetch primary email address from Google OAuth2 UserInfo endpoint."""
         try:
             data = self._get(USERINFO_URL)
@@ -80,7 +79,7 @@ class QuotaClient:
         except Exception:
             return None
 
-    def load_metadata(self) -> Dict[str, Any]:
+    def load_metadata(self) -> dict[str, Any]:
         """Load companion project metadata and tier information."""
         payload = {
             "metadata": {

@@ -1,11 +1,9 @@
 import json
-import os
-from datetime import datetime, timezone
-from pathlib import Path
+
 import pytest
 
+from promux.models import AccountMeta
 from promux.storage import StorageEngine
-from promux.models import AccountMeta, AccountState
 
 
 def test_save_and_switch_profile(tmp_path, sample_token_dict):

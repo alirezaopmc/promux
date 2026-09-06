@@ -1,15 +1,16 @@
 import fcntl
 import os
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator, Union
+
 from .constants import DEFAULT_LOCK_TIMEOUT
 
 
 @contextmanager
 def file_lock(
-    lock_path: Union[str, Path],
+    lock_path: str | Path,
     timeout: float = DEFAULT_LOCK_TIMEOUT,
 ) -> Generator[Path, None, None]:
     """Advisory POSIX flock context manager with polling timeout."""
@@ -26,9 +27,11 @@ def file_lock(
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 acquired = True
                 break
-            except (BlockingIOError, OSError):
+            except (BlockingIOError, OSError) as err:
                 if time.monotonic() - start_time >= timeout:
-                    raise TimeoutError(f"Timed out after {timeout}s waiting for lock: {lock_path}")
+                    raise TimeoutError(
+                        f"Timed out after {timeout}s waiting for lock: {lock_path}"
+                    ) from err
                 time.sleep(0.05)
 
         yield lock_path

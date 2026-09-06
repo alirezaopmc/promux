@@ -2,53 +2,54 @@ import argparse
 import json
 import os
 import sys
-from pathlib import Path
-from typing import Optional, List, Dict, Any
-
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
 
-from .constants import (
-    DEFAULT_POLL_SECONDS,
-    DEFAULT_COOLDOWN_MINUTES,
-    PROMUX_HOME,
-    GEMINI_CLI_HOME,
-    OAUTH_TOKEN_URL,
-    OAUTH_CLIENT_ID,
-    OAUTH_CLIENT_SECRET,
-)
 from .completion import (
+    SUPPORTED_SHELLS,
     generate_bash_completion,
     generate_zsh_completion,
-    SUPPORTED_SHELLS,
+)
+from .constants import (
+    DEFAULT_COOLDOWN_MINUTES,
+    DEFAULT_POLL_SECONDS,
+    OAUTH_CLIENT_ID,
+    OAUTH_CLIENT_SECRET,
+    OAUTH_TOKEN_URL,
+    PROMUX_HOME,
 )
 from .failover import FailoverEngine
-from .models import AccountMeta, QuotaSummary, RotationResult
+from .models import AccountMeta
 from .quota import QuotaClient
 from .storage import StorageEngine
-from .watch import LogWatcher, LogMatch
+from .watch import LogMatch, LogWatcher
 
 
 def get_storage() -> StorageEngine:
     """Instantiate StorageEngine honoring runtime environment overrides."""
     promux_home = Path(os.environ["PROMUX_HOME"]) if "PROMUX_HOME" in os.environ else None
-    gemini_home = Path(os.environ["PROMUX_GEMINI_HOME"]) if "PROMUX_GEMINI_HOME" in os.environ else None
+    gemini_home = (
+        Path(os.environ["PROMUX_GEMINI_HOME"]) if "PROMUX_GEMINI_HOME" in os.environ else None
+    )
     return StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
 
 
-def _read_token_data(token_path: Path) -> Optional[Dict[str, Any]]:
+def _read_token_data(token_path: Path) -> dict[str, Any] | None:
     """Safely read and parse OAuth token JSON."""
     if not token_path.exists():
         return None
     try:
-        with open(token_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        with open(token_path, encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else None
     except (json.JSONDecodeError, OSError):
         return None
 
 
-def _extract_access_token(token_data: Optional[Dict[str, Any]]) -> Optional[str]:
+def _extract_access_token(token_data: dict[str, Any] | None) -> str | None:
     """Extract access_token string from raw token dictionary."""
     if not token_data:
         return None
@@ -60,7 +61,7 @@ def _extract_access_token(token_data: Optional[Dict[str, Any]]) -> Optional[str]
     return None
 
 
-def _extract_expiry(token_data: Optional[Dict[str, Any]]) -> Optional[str]:
+def _extract_expiry(token_data: dict[str, Any] | None) -> str | None:
     """Extract expiry timestamp from raw token dictionary."""
     if not token_data:
         return None
@@ -80,7 +81,7 @@ def _get_oauth_credentials() -> tuple[str, str]:
         cfg_file = PROMUX_HOME / "oauth.json"
         if cfg_file.exists():
             try:
-                with open(cfg_file, "r", encoding="utf-8") as f:
+                with open(cfg_file, encoding="utf-8") as f:
                     data = json.load(f)
                     client_id = client_id or data.get("client_id", "")
                     client_secret = client_secret or data.get("client_secret", "")
@@ -89,7 +90,7 @@ def _get_oauth_credentials() -> tuple[str, str]:
     return client_id, client_secret
 
 
-def _refresh_token_file(token_path: Path, token_data: Dict[str, Any]) -> Optional[str]:
+def _refresh_token_file(token_path: Path, token_data: dict[str, Any]) -> str | None:
     """Attempt to refresh an expired token using its refresh_token."""
     tok = token_data.get("token")
     if not isinstance(tok, dict):
@@ -101,20 +102,22 @@ def _refresh_token_file(token_path: Path, token_data: Dict[str, Any]) -> Optiona
     if not client_id or not client_secret:
         return None
     try:
-        data = urllib.parse.urlencode({
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "refresh_token": refresh_token,
-            "grant_type": "refresh_token"
-        }).encode("utf-8")
+        data = urllib.parse.urlencode(
+            {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            }
+        ).encode("utf-8")
 
         req = urllib.request.Request(OAUTH_TOKEN_URL, data=data, method="POST")
         with urllib.request.urlopen(req, timeout=10) as resp:
             res = json.loads(resp.read().decode("utf-8"))
-        new_acc = res.get("access_token")
-        if new_acc:
+        new_acc = res.get("access_token") if isinstance(res, dict) else None
+        if isinstance(new_acc, str):
             tok["access_token"] = new_acc
-            expires_in = res.get("expires_in", 3600)
+            expires_in = res.get("expires_in", 3600) if isinstance(res, dict) else 3600
             now = datetime.now(timezone.utc)
             tok["expiry"] = (now + timedelta(seconds=expires_in)).isoformat().replace("+00:00", "Z")
             tmp_path = token_path.with_suffix(".tmp")
@@ -128,7 +131,7 @@ def _refresh_token_file(token_path: Path, token_data: Dict[str, Any]) -> Optiona
     return None
 
 
-def _get_or_refresh_access_token(token_path: Path) -> Optional[str]:
+def _get_or_refresh_access_token(token_path: Path) -> str | None:
     """Get access token, refreshing it if expired and refresh_token is present."""
     token_data = _read_token_data(token_path)
     if not token_data:
@@ -159,16 +162,18 @@ def cmd_list(storage: StorageEngine, json_out: bool) -> int:
     rows = []
     for name, data in accounts_dict.items():
         acct = AccountMeta.from_dict(data)
-        is_active = (name == active)
-        rows.append({
-            "name": name,
-            "active": is_active,
-            "state": acct.state.value,
-            "email": acct.email,
-            "cooldown_until": acct.cooldown_until.isoformat() if acct.cooldown_until else None,
-            "last_used": acct.last_used_at.isoformat() if acct.last_used_at else None,
-            "last_used_at": acct.last_used_at.isoformat() if acct.last_used_at else None,
-        })
+        is_active = name == active
+        rows.append(
+            {
+                "name": name,
+                "active": is_active,
+                "state": acct.state.value,
+                "email": acct.email,
+                "cooldown_until": acct.cooldown_until.isoformat() if acct.cooldown_until else None,
+                "last_used": acct.last_used_at.isoformat() if acct.last_used_at else None,
+                "last_used_at": acct.last_used_at.isoformat() if acct.last_used_at else None,
+            }
+        )
 
     if json_out:
         print(json.dumps(rows, indent=2))
@@ -193,7 +198,7 @@ def cmd_list(storage: StorageEngine, json_out: bool) -> int:
     return 0
 
 
-def cmd_save(storage: StorageEngine, name: str, email: Optional[str], json_out: bool) -> int:
+def cmd_save(storage: StorageEngine, name: str, email: str | None, json_out: bool) -> int:
     if not storage.live_token.exists():
         msg = f"Error: Active token file not found at {storage.live_token}"
         print(msg, file=sys.stderr)
@@ -202,7 +207,6 @@ def cmd_save(storage: StorageEngine, name: str, email: Optional[str], json_out: 
     project_id = None
     plan_type = "STANDARD"
 
-    token_data = _read_token_data(storage.live_token)
     access_token = _get_or_refresh_access_token(storage.live_token)
 
     if access_token:
@@ -247,7 +251,12 @@ def cmd_switch(storage: StorageEngine, name: str, json_out: bool) -> int:
         return 0
     else:
         if json_out:
-            print(json.dumps({"success": False, "error": f"Account '{name}' not found or token missing"}, indent=2))
+            print(
+                json.dumps(
+                    {"success": False, "error": f"Account '{name}' not found or token missing"},
+                    indent=2,
+                )
+            )
         print(f"Error: Account '{name}' not found or token missing", file=sys.stderr)
         return 1
 
@@ -265,7 +274,9 @@ def cmd_next(failover: FailoverEngine, reason: str, cooldown: int, json_out: boo
         print(json.dumps(result_dict, indent=2))
     else:
         if res.success:
-            print(f"Rotated from '{res.from_account}' to '{res.to_account}' (reason: {res.reason}).")
+            print(
+                f"Rotated from '{res.from_account}' to '{res.to_account}' (reason: {res.reason})."
+            )
         else:
             print(f"Rotation failed: {res.reason}", file=sys.stderr)
 
@@ -327,7 +338,7 @@ def cmd_remove(storage: StorageEngine, name: str, json_out: bool) -> int:
         return 1
 
 
-def cmd_quota(storage: StorageEngine, name: Optional[str], json_out: bool) -> int:
+def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
     target_name = name or storage.get_active_profile()
     if not target_name:
         msg = "No account specified and no active profile."
@@ -447,12 +458,14 @@ def cmd_quota(storage: StorageEngine, name: Optional[str], json_out: bool) -> in
 
     print(f"{'Gemini Models':<24} {'5h':<10} {g_5h:<12} {qs.gemini_5h_reset or '-'}")
     print(f"{'Gemini Models':<24} {'weekly':<10} {g_wk:<12} {qs.gemini_weekly_reset or '-'}")
-    print(f"{'Claude & GPT Models':<24} {'5h':<10} {tp_5h:<12} {qs.third_party_5h_reset or '-'}")
-    print(f"{'Claude & GPT Models':<24} {'weekly':<10} {tp_wk:<12} {qs.third_party_weekly_reset or '-'}")
+    tp_5h_reset = qs.third_party_5h_reset or "-"
+    tp_wk_reset = qs.third_party_weekly_reset or "-"
+    print(f"{'Claude & GPT Models':<24} {'5h':<10} {tp_5h:<12} {tp_5h_reset}")
+    print(f"{'Claude & GPT Models':<24} {'weekly':<10} {tp_wk:<12} {tp_wk_reset}")
     return 0
 
 
-def cmd_watch(failover: FailoverEngine, poll_seconds: float, cooldown: Optional[int]) -> int:
+def cmd_watch(failover: FailoverEngine, poll_seconds: float, cooldown: int | None) -> int:
     gemini_home = None
     if "PROMUX_GEMINI_HOME" in os.environ:
         gemini_home = Path(os.environ["PROMUX_GEMINI_HOME"])
@@ -465,7 +478,7 @@ def cmd_watch(failover: FailoverEngine, poll_seconds: float, cooldown: Optional[
         gemini_home=gemini_home,
     )
 
-    def on_match(match: LogMatch):
+    def on_match(match: LogMatch) -> None:
         print(f"[promux-watch] Quota exhausted: {match.pattern} in {match.file_path}")
         if match.reset_hint:
             print(f"[promux-watch] Reset hint detected: {match.reset_hint}")
@@ -494,7 +507,9 @@ def cmd_completion(shell: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     common_parser = argparse.ArgumentParser(add_help=False)
-    common_parser.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Output in JSON format")
+    common_parser.add_argument(
+        "--json", action="store_true", default=argparse.SUPPRESS, help="Output in JSON format"
+    )
 
     parser = argparse.ArgumentParser(
         prog="promux",
@@ -508,7 +523,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("list", parents=[common_parser], help="List all accounts in the vault")
 
     # save
-    save_p = sub.add_parser("save", parents=[common_parser], help="Save active token as a named profile")
+    save_p = sub.add_parser(
+        "save", parents=[common_parser], help="Save active token as a named profile"
+    )
     save_p.add_argument("name", help="Profile name")
     save_p.add_argument("--email", default=None, help="Account email (auto-detected if omitted)")
 
@@ -517,25 +534,48 @@ def build_parser() -> argparse.ArgumentParser:
     switch_p.add_argument("name", help="Profile name to switch to")
 
     # next
-    next_p = sub.add_parser("next", parents=[common_parser], help="Rotate to next eligible standby profile")
+    next_p = sub.add_parser(
+        "next", parents=[common_parser], help="Rotate to next eligible standby profile"
+    )
     next_p.add_argument("--reason", default="manual", help="Reason for rotation (default: manual)")
-    next_p.add_argument("--cooldown", type=int, default=DEFAULT_COOLDOWN_MINUTES, help=f"Cooldown duration in minutes (default: {DEFAULT_COOLDOWN_MINUTES})")
+    next_p.add_argument(
+        "--cooldown",
+        type=int,
+        default=DEFAULT_COOLDOWN_MINUTES,
+        help=f"Cooldown duration in minutes (default: {DEFAULT_COOLDOWN_MINUTES})",
+    )
 
     # quota
     quota_p = sub.add_parser("quota", parents=[common_parser], help="Check Cloud Code Assist quota")
-    quota_p.add_argument("name", nargs="?", default=None, help="Profile name (default: active profile)")
+    quota_p.add_argument(
+        "name", nargs="?", default=None, help="Profile name (default: active profile)"
+    )
 
     # whoami
     sub.add_parser("whoami", parents=[common_parser], help="Show active profile and token status")
 
     # remove
-    remove_p = sub.add_parser("remove", parents=[common_parser], help="Remove a profile from the vault")
+    remove_p = sub.add_parser(
+        "remove", parents=[common_parser], help="Remove a profile from the vault"
+    )
     remove_p.add_argument("name", help="Profile name to remove")
 
     # watch
-    watch_p = sub.add_parser("watch", parents=[common_parser], help="Start reactive log tailer daemon")
-    watch_p.add_argument("--poll-seconds", type=float, default=DEFAULT_POLL_SECONDS, help=f"Log polling interval in seconds (default: {DEFAULT_POLL_SECONDS})")
-    watch_p.add_argument("--cooldown", type=int, default=None, help="Cooldown override in minutes (default: auto-detected from log hints)")
+    watch_p = sub.add_parser(
+        "watch", parents=[common_parser], help="Start reactive log tailer daemon"
+    )
+    watch_p.add_argument(
+        "--poll-seconds",
+        type=float,
+        default=DEFAULT_POLL_SECONDS,
+        help=f"Log polling interval in seconds (default: {DEFAULT_POLL_SECONDS})",
+    )
+    watch_p.add_argument(
+        "--cooldown",
+        type=int,
+        default=None,
+        help="Cooldown override in minutes (default: auto-detected from log hints)",
+    )
 
     # completion
     p_comp = sub.add_parser("completion", help="Generate shell auto-completion script")
@@ -544,7 +584,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point returning status code."""
     if argv is None:
         argv = sys.argv[1:]

@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-import pytest
+
 from promux.failover import FailoverEngine
 from promux.models import AccountMeta, AccountState
 
@@ -36,8 +36,12 @@ def test_failover_rotates_to_lru_standby():
     now = datetime.now(timezone.utc)
     storage.state["accounts"] = {
         "acc1": AccountMeta(name="acc1", enabled=True, last_used_at=now).to_dict(),
-        "acc2": AccountMeta(name="acc2", enabled=True, last_used_at=now - timedelta(hours=2)).to_dict(),
-        "acc3": AccountMeta(name="acc3", enabled=True, last_used_at=now - timedelta(hours=5)).to_dict(),
+        "acc2": AccountMeta(
+            name="acc2", enabled=True, last_used_at=now - timedelta(hours=2)
+        ).to_dict(),
+        "acc3": AccountMeta(
+            name="acc3", enabled=True, last_used_at=now - timedelta(hours=5)
+        ).to_dict(),
     }
 
     engine = FailoverEngine(storage)
@@ -57,9 +61,7 @@ def test_failover_rotates_to_lru_standby():
 
 def test_failover_no_candidates():
     storage = FakeStorage()
-    storage.state["accounts"] = {
-        "acc1": AccountMeta(name="acc1", enabled=True).to_dict()
-    }
+    storage.state["accounts"] = {"acc1": AccountMeta(name="acc1", enabled=True).to_dict()}
     engine = FailoverEngine(storage)
     res = engine.rotate_next(reason="quota_exhausted")
     assert res.success is False
@@ -79,9 +81,13 @@ def test_get_eligible_standby_lru_sorting_with_none_and_timezones():
     # acc_recent used 1 hour ago
     storage.state["accounts"] = {
         "acc1": AccountMeta(name="acc1", enabled=True, last_used_at=now).to_dict(),
-        "acc_recent": AccountMeta(name="acc_recent", enabled=True, last_used_at=now - timedelta(hours=1)).to_dict(),
+        "acc_recent": AccountMeta(
+            name="acc_recent", enabled=True, last_used_at=now - timedelta(hours=1)
+        ).to_dict(),
         "acc_none": AccountMeta(name="acc_none", enabled=True, last_used_at=None).to_dict(),
-        "acc_old": AccountMeta(name="acc_old", enabled=True, last_used_at=now - timedelta(hours=10)).to_dict(),
+        "acc_old": AccountMeta(
+            name="acc_old", enabled=True, last_used_at=now - timedelta(hours=10)
+        ).to_dict(),
     }
 
     engine = FailoverEngine(storage)

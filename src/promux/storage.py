@@ -2,18 +2,19 @@ import json
 import os
 import shutil
 import threading
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Optional, Any, List, Generator
+from typing import Any
 
-from .constants import PROMUX_HOME, GEMINI_CLI_HOME, LIVE_TOKEN, ACCOUNTS_DIR, STATE_FILE, LOCK_FILE
+from .constants import GEMINI_CLI_HOME, PROMUX_HOME
 from .lock import file_lock
-from .models import AccountMeta, AccountState
+from .models import AccountMeta
 
 
 class StorageEngine:
-    def __init__(self, promux_home: Optional[Path] = None, gemini_home: Optional[Path] = None):
+    def __init__(self, promux_home: Path | None = None, gemini_home: Path | None = None):
         self.home = Path(promux_home or PROMUX_HOME)
         self.gemini_home = Path(gemini_home or GEMINI_CLI_HOME)
         self.accounts_dir = self.home / "accounts"
@@ -25,14 +26,14 @@ class StorageEngine:
         self.accounts_dir.mkdir(parents=True, exist_ok=True)
 
     @property
-    def _tx_state(self) -> Optional[Dict[str, Any]]:
+    def _tx_state(self) -> dict[str, Any] | None:
         return getattr(self._local, "tx_state", None)
 
     @_tx_state.setter
-    def _tx_state(self, val: Optional[Dict[str, Any]]):
+    def _tx_state(self, val: dict[str, Any] | None) -> None:
         self._local.tx_state = val
 
-    def _atomic_write_json(self, target_path: Path, data: Dict[str, Any]):
+    def _atomic_write_json(self, target_path: Path, data: dict[str, Any]) -> None:
         target_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = target_path.with_suffix(".tmp")
         with open(tmp_path, "w", encoding="utf-8") as f:
@@ -41,7 +42,7 @@ class StorageEngine:
         os.replace(tmp_path, target_path)
 
     @contextmanager
-    def transaction(self) -> Generator[Dict[str, Any], None, None]:
+    def transaction(self) -> Generator[dict[str, Any], None, None]:
         if self._tx_state is not None:
             yield self._tx_state
             return
@@ -55,18 +56,19 @@ class StorageEngine:
                 self._tx_state = None
             self._atomic_write_json(self.state_file, state)
 
-    def load_state(self) -> Dict[str, Any]:
+    def load_state(self) -> dict[str, Any]:
         if self._tx_state is not None:
             return self._tx_state
         if not self.state_file.exists():
             return {"active": None, "accounts": {}}
         try:
-            with open(self.state_file, "r", encoding="utf-8") as f:
-                return json.load(f)
+            with open(self.state_file, encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {"active": None, "accounts": {}}
         except (json.JSONDecodeError, OSError):
             return {"active": None, "accounts": {}}
 
-    def save_state(self, state: Dict[str, Any]):
+    def save_state(self, state: dict[str, Any]) -> None:
         if self._tx_state is not None:
             self._tx_state.clear()
             self._tx_state.update(state)
@@ -77,8 +79,8 @@ class StorageEngine:
     def save_profile(
         self,
         name: str,
-        email: Optional[str] = None,
-        project_id: Optional[str] = None,
+        email: str | None = None,
+        project_id: str | None = None,
         plan_type: str = "STANDARD",
     ) -> AccountMeta:
         if not self.live_token.exists():
@@ -165,15 +167,15 @@ class StorageEngine:
                 state["active"] = None
             return True
 
-    def get_active_profile(self) -> Optional[str]:
+    def get_active_profile(self) -> str | None:
         state = self.load_state()
         return state.get("active")
 
-    def get_account(self, name: str) -> Optional[AccountMeta]:
+    def get_account(self, name: str) -> AccountMeta | None:
         state = self.load_state()
         data = state.get("accounts", {}).get(name)
         return AccountMeta.from_dict(data) if data else None
 
-    def list_accounts(self) -> List[AccountMeta]:
+    def list_accounts(self) -> list[AccountMeta]:
         state = self.load_state()
         return [AccountMeta.from_dict(d) for d in state.get("accounts", {}).values()]

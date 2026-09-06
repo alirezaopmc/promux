@@ -1,22 +1,17 @@
-import io
-import json
 import urllib.error
 import urllib.request
-import pytest
-from promux.quota import QuotaClient
-from promux.models import QuotaSummary
+
 from promux.constants import (
-    CODE_ASSIST_BASE_URL,
-    LOAD_ENDPOINT,
-    QUOTA_ENDPOINT,
-    USERINFO_URL,
-    USER_AGENT,
     DEFAULT_HTTP_TIMEOUT,
+    LOAD_ENDPOINT,
+    USER_AGENT,
+    USERINFO_URL,
 )
+from promux.quota import QuotaClient
 
 MOCK_METADATA_RESP = {
     "cloudaicompanionProject": "aicode-consumers",
-    "currentTier": {"id": "free-tier", "name": "Antigravity"}
+    "currentTier": {"id": "free-tier", "name": "Antigravity"},
 }
 
 MOCK_QUOTA_RESP = {
@@ -28,15 +23,15 @@ MOCK_QUOTA_RESP = {
                     "bucketId": "gemini-weekly",
                     "window": "weekly",
                     "remainingFraction": 0.57,
-                    "resetTime": "2026-09-08T17:46:10Z"
+                    "resetTime": "2026-09-08T17:46:10Z",
                 },
                 {
                     "bucketId": "gemini-5h",
                     "window": "5h",
                     "remainingFraction": 0.85,
-                    "resetTime": "2026-09-03T22:55:18Z"
-                }
-            ]
+                    "resetTime": "2026-09-03T22:55:18Z",
+                },
+            ],
         },
         {
             "displayName": "Claude and GPT models",
@@ -45,23 +40,20 @@ MOCK_QUOTA_RESP = {
                     "bucketId": "3p-weekly",
                     "window": "weekly",
                     "remainingFraction": 0.43,
-                    "resetTime": "2026-09-09T01:11:22Z"
+                    "resetTime": "2026-09-09T01:11:22Z",
                 },
                 {
                     "bucketId": "3p-5h",
                     "window": "5h",
                     "remainingFraction": 0.25,
-                    "resetTime": "2026-09-04T02:36:43Z"
-                }
-            ]
-        }
+                    "resetTime": "2026-09-04T02:36:43Z",
+                },
+            ],
+        },
     ]
 }
 
-MOCK_USERINFO_RESP = {
-    "email": "developer@manova.space",
-    "email_verified": True
-}
+MOCK_USERINFO_RESP = {"email": "developer@manova.space", "email_verified": True}
 
 
 def test_quota_client_parsing(monkeypatch):
@@ -106,7 +98,7 @@ def test_quota_client_load_metadata_project_dict(monkeypatch):
     def mock_post(endpoint, payload):
         return {
             "cloudaicompanionProject": {"id": "custom-project-123"},
-            "currentTier": {"id": "standard-tier", "name": "Antigravity Standard"}
+            "currentTier": {"id": "standard-tier", "name": "Antigravity Standard"},
         }
 
     monkeypatch.setattr(client, "_post", mock_post)
