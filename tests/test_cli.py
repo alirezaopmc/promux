@@ -1505,5 +1505,217 @@ def test_cli_switch_auto_refreshes_expired(tmp_path, sample_token_dict, monkeypa
     assert live_data["token"]["access_token"] == "refreshed_acct2"
 
 
+def test_quota_auto_refreshes_vault_and_syncs_live(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main, get_storage
+    from promux.quota import QuotaClient
+
+    # Save active profile
+    assert main(["save", "live_acct"]) == 0
+    capsys.readouterr()
+    storage = get_storage()
+
+    # Expire the live token
+    live_data = json.loads(storage.live_token.read_text())
+    live_data["token"]["expiry"] = "2020-01-01T00:00:00Z"
+    storage.live_token.write_text(json.dumps(live_data))
+
+    # Mock refresh to renew
+    def mock_refresh_native(p, td):
+        td["token"]["access_token"] = "refreshed_live_quota"
+        td["token"]["expiry"] = "2030-01-01T00:00:00Z"
+        p.write_text(json.dumps(td))
+        return "refreshed_live_quota"
+
+    monkeypatch.setattr("promux.cli._refresh_token_native", mock_refresh_native)
+
+    # Mock QuotaClient get_quota and load_metadata
+    qs = QuotaSummary()
+    qs.gemini_5h_remaining = 0.95
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda s: {"project_id": "proj-live"})
+    monkeypatch.setattr(QuotaClient, "get_quota", lambda s, p: qs)
+
+    rc = main(["quota", "live_acct", "--json"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    res = json.loads(out)
+    assert res["gemini"]["5h_remaining"] == 0.95
+
+    # Check that live token was updated
+    updated_live = json.loads(storage.live_token.read_text())
+    assert updated_live["token"]["access_token"] == "refreshed_live_quota"
+
+    # Check that vault token was also synced atomically
+    vault_file = storage.accounts_dir / "live_acct" / "antigravity-oauth-token"
+    updated_vault = json.loads(vault_file.read_text())
+    assert updated_vault["token"]["access_token"] == "refreshed_live_quota"
 
 
+def test_quota_refreshed_in_vault_syncs_to_live(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main, get_storage
+    from promux.quota import QuotaClient
+
+    assert main(["save", "vault_acct"]) == 0
+    storage = get_storage()
+
+    # Expire vault token and remove live token so vault path is used
+    vault_file = storage.accounts_dir / "vault_acct" / "antigravity-oauth-token"
+    vault_data = json.loads(vault_file.read_text())
+    vault_data["token"]["expiry"] = "2020-01-01T00:00:00Z"
+    vault_file.write_text(json.dumps(vault_data))
+    if storage.live_token.exists():
+        storage.live_token.unlink()
+
+    def mock_refresh_native(p, td):
+        td["token"]["access_token"] = "refreshed_from_vault"
+        td["token"]["expiry"] = "2030-01-01T00:00:00Z"
+        p.write_text(json.dumps(td))
+        return "refreshed_from_vault"
+
+    monkeypatch.setattr("promux.cli._refresh_token_native", mock_refresh_native)
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda s: {"project_id": "proj-vault"})
+    qs = QuotaSummary()
+    qs.gemini_5h_remaining = 0.90
+    monkeypatch.setattr(QuotaClient, "get_quota", lambda s, p: qs)
+
+    rc = main(["quota", "vault_acct", "--json"])
+    assert rc == 0
+
+    # Check that live token was recreated and synced
+    assert storage.live_token.exists()
+    updated_live = json.loads(storage.live_token.read_text())
+    assert updated_live["token"]["access_token"] == "refreshed_from_vault"
+
+
+def test_quota_passes_storage_for_fallback_agy(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main, get_storage
+    from promux.quota import QuotaClient
+
+    assert main(["save", "agy_acct"]) == 0
+    storage = get_storage()
+
+    # Expire live token
+    live_data = json.loads(storage.live_token.read_text())
+    live_data["token"]["expiry"] = "2020-01-01T00:00:00Z"
+    storage.live_token.write_text(json.dumps(live_data))
+
+    # Tier 1 fails
+    monkeypatch.setattr("promux.cli._refresh_token_native", lambda p, td: None)
+
+    # Tier 2 succeeds and checks storage argument was passed
+    fallback_called = {"called": False}
+
+    def mock_fallback_agy(p, st):
+        fallback_called["called"] = True
+        assert st is not None
+        live_d = json.loads(p.read_text())
+        live_d["token"]["access_token"] = "agy_fallback_token"
+        live_d["token"]["expiry"] = "2030-01-01T00:00:00Z"
+        p.write_text(json.dumps(live_d))
+        return "agy_fallback_token"
+
+    monkeypatch.setattr("promux.cli._refresh_token_fallback_agy", mock_fallback_agy)
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda s: {"project_id": "proj-agy"})
+    qs = QuotaSummary()
+    qs.gemini_5h_remaining = 0.88
+    monkeypatch.setattr(QuotaClient, "get_quota", lambda s, p: qs)
+
+    rc = main(["quota", "agy_acct", "--json"])
+    assert rc == 0
+    assert fallback_called["called"] is True
+    updated_live = json.loads(storage.live_token.read_text())
+    assert updated_live["token"]["access_token"] == "agy_fallback_token"
+
+
+def test_quota_401_retry_passes_storage_and_syncs(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main, get_storage
+    from promux.quota import QuotaClient
+
+    assert main(["save", "retry_acct"]) == 0
+    storage = get_storage()
+
+    calls = {"count": 0}
+
+    def mock_get_quota(self, pid):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise Exception("HTTP Error 401: Unauthorized")
+        return QuotaSummary(gemini_5h_remaining=0.82)
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda s: {"project_id": "proj-retry"})
+    monkeypatch.setattr(QuotaClient, "get_quota", mock_get_quota)
+
+    # Tier 1 fails on 401 retry
+    monkeypatch.setattr("promux.cli._refresh_token_native", lambda p, td: None)
+
+    # Tier 2 succeeds on 401 retry
+    fallback_called = {"called": False}
+
+    def mock_fallback_agy(p, st):
+        fallback_called["called"] = True
+        assert st is not None
+        live_d = json.loads(p.read_text())
+        live_d["token"]["access_token"] = "retry_agy_token"
+        live_d["token"]["expiry"] = "2030-01-01T00:00:00Z"
+        p.write_text(json.dumps(live_d))
+        return "retry_agy_token"
+
+    monkeypatch.setattr("promux.cli._refresh_token_fallback_agy", mock_fallback_agy)
+
+    rc = main(["quota", "retry_acct", "--json"])
+    assert rc == 0
+    assert calls["count"] == 2
+    assert fallback_called["called"] is True
+
+    # Check both live and vault updated
+    updated_live = json.loads(storage.live_token.read_text())
+    assert updated_live["token"]["access_token"] == "retry_agy_token"
+    vault_file = storage.accounts_dir / "retry_acct" / "antigravity-oauth-token"
+    updated_vault = json.loads(vault_file.read_text())
+    assert updated_vault["token"]["access_token"] == "retry_agy_token"
+
+
+def test_quota_revoked_token_error_handling(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main, get_storage
+    from promux.quota import QuotaClient
+
+    assert main(["save", "revoked_acct"]) == 0
+    capsys.readouterr()
+    storage = get_storage()
+
+    # Expire live token
+    live_data = json.loads(storage.live_token.read_text())
+    live_data["token"]["expiry"] = "2020-01-01T00:00:00Z"
+    storage.live_token.write_text(json.dumps(live_data))
+
+    # Mock native refresh to simulate Google invalid_grant
+    import urllib.error
+
+    def mock_refresh_revoked(p, td):
+        # Trigger revoked state
+        raise urllib.error.HTTPError(
+            url="https://oauth2.googleapis.com/token",
+            code=400,
+            msg="Bad Request",
+            hdrs={},  # type: ignore[arg-type]
+            fp=None,  # type: ignore[arg-type]
+        )
+
+    monkeypatch.setattr("promux.cli._last_refresh_revoked", True)
+
+    def mock_get_quota(self, pid):
+        raise Exception("HTTP Error 401: Unauthorized")
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda s: {"project_id": "proj-revoked"})
+    monkeypatch.setattr(QuotaClient, "get_quota", mock_get_quota)
+
+    rc = main(["quota", "revoked_acct", "--json"])
+    assert rc == 1
+    out, _ = capsys.readouterr()
+    res = json.loads(out)
+    assert "revoked" in res["error"].lower()
+    assert "re-authenticate via 'agy'" in res["error"].lower()

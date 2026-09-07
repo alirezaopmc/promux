@@ -99,6 +99,23 @@ def _atomic_copy_token(src: Path, dst: Path) -> None:
     os.replace(tmp_dst, dst)
 
 
+def _sync_active_tokens(src: Path, dst: Path) -> None:
+    """Atomically copy refreshed token from src to dst if tokens share identity or dst is missing."""
+    try:
+        if not src.exists():
+            return
+        if dst.exists():
+            src_td = _read_token_data(src)
+            dst_td = _read_token_data(dst)
+            sr = _extract_refresh_token(src_td)
+            dr = _extract_refresh_token(dst_td)
+            if sr and dr and sr != dr:
+                return
+        _atomic_copy_token(src, dst)
+    except Exception:
+        pass
+
+
 def _get_oauth_credentials() -> tuple[str, str]:
     """Retrieve OAuth client ID and secret from environment or ~/.promux/oauth.json."""
     client_id = os.environ.get("PROMUX_OAUTH_CLIENT_ID", OAUTH_CLIENT_ID)
@@ -177,8 +194,17 @@ def _refresh_token_native(token_path: Path, token_data: dict[str, Any]) -> str |
             tmp_path.chmod(0o600)
             os.replace(tmp_path, token_path)
             return new_acc
-    except Exception:
-        pass
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode("utf-8"))
+            if isinstance(body, dict) and body.get("error") == "invalid_grant":
+                _last_refresh_revoked = True
+        except Exception:
+            if "invalid_grant" in str(e).lower():
+                _last_refresh_revoked = True
+    except Exception as e:
+        if "invalid_grant" in str(e).lower():
+            _last_refresh_revoked = True
     return None
 
 
@@ -263,6 +289,7 @@ def _refresh_token_fallback_agy(token_path: Path, storage: StorageEngine) -> str
 
 
 _last_refresh_method: str = "native"
+_last_refresh_revoked: bool = False
 
 
 def _refresh_token_file(
@@ -271,13 +298,23 @@ def _refresh_token_file(
     storage: StorageEngine | None = None,
 ) -> str | None:
     """Attempt to refresh an expired token using its refresh_token or agy fallback."""
-    global _last_refresh_method
+    global _last_refresh_method, _last_refresh_revoked
     _last_refresh_method = "failed"
     # Tier 1: Native HTTP refresh
-    refreshed = _refresh_token_native(token_path, token_data)
+    try:
+        refreshed = _refresh_token_native(token_path, token_data)
+    except Exception as e:
+        if "invalid_grant" in str(e).lower():
+            _last_refresh_revoked = True
+        refreshed = None
+
     if refreshed:
         _last_refresh_method = "native"
+        _last_refresh_revoked = False
         return refreshed
+    if _last_refresh_revoked:
+        _last_refresh_method = "revoked"
+        return None
     # Tier 2: Headless agy fallback
     if storage is not None:
         refreshed = _refresh_token_fallback_agy(token_path, storage)
@@ -504,16 +541,46 @@ def _fetch_account_quota(
         return None, None, f"Account '{target_name}' not found in vault."
 
     # Locate token file
-    if target_name == storage.get_active_profile() and storage.live_token.exists():
+    is_active = target_name == storage.get_active_profile()
+    vault_token_path = storage.accounts_dir / target_name / "antigravity-oauth-token"
+
+    if is_active and storage.live_token.exists():
         token_path = storage.live_token
     else:
-        token_path = storage.accounts_dir / target_name / "antigravity-oauth-token"
+        token_path = vault_token_path
 
     token_data = _read_token_data(token_path)
-    access_token = _get_or_refresh_access_token(token_path)
+    orig_acc = _extract_access_token(token_data)
+    orig_exp = _extract_expiry(token_data)
+
+    try:
+        access_token = _get_or_refresh_access_token(token_path, storage=storage)
+    except TypeError:
+        access_token = _get_or_refresh_access_token(token_path)
+
+    # If token was refreshed, sync between live and vault for active profile
+    new_data = _read_token_data(token_path)
+    new_acc = _extract_access_token(new_data)
+    new_exp = _extract_expiry(new_data)
+    token_refreshed = bool(new_acc and (orig_acc is None or new_acc != orig_acc or new_exp != orig_exp))
+
+    if is_active and token_refreshed:
+        if token_path == storage.live_token:
+            _sync_active_tokens(storage.live_token, vault_token_path)
+        elif token_path == vault_token_path:
+            _sync_active_tokens(vault_token_path, storage.live_token)
+
     if not access_token:
-        access_token = _extract_access_token(token_data)
+        access_token = new_acc or orig_acc
+
     if not access_token:
+        if _last_refresh_revoked:
+            return (
+                None,
+                None,
+                f"Refresh token for '{target_name}' has expired or been revoked. "
+                f"Please re-authenticate via 'agy' and save using 'promux save {target_name}'.",
+            )
         return None, None, f"Could not extract access token for account '{target_name}'."
 
     client = QuotaClient(token=access_token)
@@ -528,6 +595,13 @@ def _fetch_account_quota(
                     state["accounts"][target_name]["project_id"] = project_id
                     storage.save_state(state)
         except Exception as e:
+            if _last_refresh_revoked:
+                return (
+                    None,
+                    None,
+                    f"Refresh token for '{target_name}' has expired or been revoked. "
+                    f"Please re-authenticate via 'agy' and save using 'promux save {target_name}'.",
+                )
             return None, None, f"Failed to load project metadata for '{target_name}': {e}"
 
     if not project_id:
@@ -539,8 +613,16 @@ def _fetch_account_quota(
     except Exception as e:
         if "401" in str(e):
             td = _read_token_data(token_path)
-            refreshed = _refresh_token_file(token_path, td) if td else None
+            try:
+                refreshed = _refresh_token_file(token_path, td, storage=storage) if td else None
+            except TypeError:
+                refreshed = _refresh_token_file(token_path, td) if td else None
             if refreshed:
+                if is_active:
+                    if token_path == storage.live_token:
+                        _sync_active_tokens(storage.live_token, vault_token_path)
+                    elif token_path == vault_token_path:
+                        _sync_active_tokens(vault_token_path, storage.live_token)
                 client.token = refreshed
                 try:
                     qs = client.get_quota(project_id)
@@ -548,6 +630,13 @@ def _fetch_account_quota(
                 except Exception as retry_e:
                     return None, project_id, f"Error retrieving quota: {retry_e}"
             else:
+                if _last_refresh_revoked:
+                    return (
+                        None,
+                        project_id,
+                        f"Authentication failed (401): Refresh token for '{target_name}' has expired or been revoked. "
+                        f"Please re-authenticate via 'agy' and save using 'promux save {target_name}'.",
+                    )
                 return None, project_id, f"Authentication failed (401): {e}"
         return None, project_id, f"Error retrieving quota: {e}"
 
