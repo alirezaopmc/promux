@@ -77,6 +77,27 @@ def _extract_expiry(token_data: dict[str, Any] | None) -> str | None:
     return None
 
 
+def _extract_refresh_token(token_data: dict[str, Any] | None) -> str | None:
+    """Extract refresh_token string from raw token dictionary."""
+    if not token_data:
+        return None
+    tok = token_data.get("token")
+    if isinstance(tok, dict):
+        return tok.get("refresh_token")
+    if "refresh_token" in token_data:
+        return token_data.get("refresh_token")
+    return None
+
+
+def _atomic_copy_token(src: Path, dst: Path) -> None:
+    """Atomically copy a token file ensuring 0600 permissions."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp_dst = dst.with_suffix(f".tmp_{os.getpid()}")
+    shutil.copy2(src, tmp_dst)
+    tmp_dst.chmod(0o600)
+    os.replace(tmp_dst, dst)
+
+
 def _get_oauth_credentials() -> tuple[str, str]:
     """Retrieve OAuth client ID and secret from environment or ~/.promux/oauth.json."""
     client_id = os.environ.get("PROMUX_OAUTH_CLIENT_ID", OAUTH_CLIENT_ID)
@@ -725,17 +746,19 @@ def cmd_refresh(
         # If target is active profile and storage.live_token exists, check/sync
         if is_active and storage.live_token.exists():
             if not vault_token_path.exists():
-                vault_token_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(storage.live_token, vault_token_path)
-                vault_token_path.chmod(0o600)
+                _atomic_copy_token(storage.live_token, vault_token_path)
             else:
                 live_data = _read_token_data(storage.live_token)
                 vault_data = _read_token_data(vault_token_path)
-                live_exp = _extract_expiry(live_data)
-                vault_exp = _extract_expiry(vault_data)
-                if live_exp and vault_exp and live_exp > vault_exp:
-                    shutil.copy2(storage.live_token, vault_token_path)
-                    vault_token_path.chmod(0o600)
+                lr = _extract_refresh_token(live_data)
+                vr = _extract_refresh_token(vault_data)
+                # Check that storage.live_token and vault_token_path share the same refresh_token
+                # before syncing to ensure token identity.
+                if not (lr and vr and lr != vr):
+                    live_exp = _extract_expiry(live_data)
+                    vault_exp = _extract_expiry(vault_data)
+                    if live_exp and vault_exp and live_exp > vault_exp:
+                        _atomic_copy_token(storage.live_token, vault_token_path)
 
         token_path = vault_token_path
         token_data = _read_token_data(token_path)
@@ -784,11 +807,15 @@ def cmd_refresh(
                 # If target is active profile, sync refreshed token to storage.live_token
                 if is_active:
                     try:
-                        storage.live_token.parent.mkdir(parents=True, exist_ok=True)
-                        tmp_live = storage.live_token.with_suffix(f".tmp_{os.getpid()}")
-                        shutil.copy2(token_path, tmp_live)
-                        tmp_live.chmod(0o600)
-                        os.replace(tmp_live, storage.live_token)
+                        should_sync_live = True
+                        if storage.live_token.exists():
+                            curr_live_data = _read_token_data(storage.live_token)
+                            curr_lr = _extract_refresh_token(curr_live_data)
+                            ref_lr = _extract_refresh_token(new_data) or _extract_refresh_token(token_data)
+                            if curr_lr and ref_lr and curr_lr != ref_lr:
+                                should_sync_live = False
+                        if should_sync_live:
+                            _atomic_copy_token(token_path, storage.live_token)
                     except Exception:
                         pass
             else:

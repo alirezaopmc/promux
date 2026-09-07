@@ -1433,3 +1433,50 @@ def test_cli_refresh_missing_token_file(tmp_path, sample_token_dict, monkeypatch
     assert "FAILED" in out
 
 
+def test_atomic_copy_token_permissions_and_atomicity(tmp_path):
+    from promux.cli import _atomic_copy_token
+
+    src = tmp_path / "src_token"
+    src.write_text("token_content")
+    dst = tmp_path / "sub" / "dst_token"
+
+    _atomic_copy_token(src, dst)
+    assert dst.exists()
+    assert dst.read_text() == "token_content"
+    assert oct(dst.stat().st_mode & 0o777) == oct(0o600)
+
+
+def test_cli_refresh_identity_mismatch_prevents_sync(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main, get_storage
+
+    assert main(["save", "acct1", "--email", "a1@test.com"]) == 0
+    capsys.readouterr()
+
+    storage = get_storage()
+    # Alter live_token so it has a different refresh_token and a newer expiry
+    live_dict = {
+        "token": {
+            "access_token": "different_acc",
+            "refresh_token": "DIFFERENT_RT",
+            "expiry": "2030-01-01T00:00:00Z",
+        }
+    }
+    storage.live_token.write_text(json.dumps(live_dict))
+
+    # Mock native refresh
+    monkeypatch.setattr("promux.cli._refresh_token_native", lambda p, td: "refreshed_acc")
+
+    rc = main(["refresh", "acct1"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    assert "acct1" in out
+    assert "REFRESHED" in out
+
+    # Verify vault token still has original refresh_token, NOT DIFFERENT_RT
+    vault_token = storage.accounts_dir / "acct1" / "antigravity-oauth-token"
+    vault_data = json.loads(vault_token.read_text())
+    assert vault_data["token"]["refresh_token"] == "mock_refresh_token"
+
+
+
