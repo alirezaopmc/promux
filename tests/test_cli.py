@@ -1030,4 +1030,237 @@ def test_get_or_refresh_access_token_uses_buffer(tmp_path, monkeypatch):
     assert token == "buffer_refreshed_acc"
 
 
+def test_refresh_token_fallback_agy_success(tmp_path, monkeypatch):
+    import subprocess
+    from promux.cli import _refresh_token_fallback_agy, get_storage
 
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PROMUX_HOME", str(promux_home))
+    monkeypatch.setenv("PROMUX_GEMINI_HOME", str(gemini_home))
+
+    storage = get_storage()
+    live_token = storage.live_token
+    live_token.write_text(json.dumps({"token": {"access_token": "original_live"}}))
+
+    target_dir = storage.accounts_dir / "target_acct"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_token = target_dir / "antigravity-oauth-token"
+    target_token.write_text(json.dumps({"token": {"access_token": "target_old", "expiry": "2020-01-01T00:00:00Z"}}))
+
+    # Mock shutil.which to say 'agy' exists
+    monkeypatch.setattr("shutil.which", lambda cmd: "/mock/bin/agy" if cmd == "agy" else None)
+
+    # Mock subprocess.run to simulate agy updating the staged live token
+    def mock_run(cmd, capture_output=True, timeout=10, check=False):
+        # Simulate agy refreshing the live token file
+        live_token.write_text(json.dumps({"token": {"access_token": "target_renewed_by_agy", "expiry": "2030-01-01T00:00:00Z"}}))
+        return subprocess.CompletedProcess(cmd, 0, stdout=b"gemini-3.8-flash", stderr=b"")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    new_acc = _refresh_token_fallback_agy(target_token, storage)
+    assert new_acc == "target_renewed_by_agy"
+
+    # Verify target token in vault was updated
+    vault_data = json.loads(target_token.read_text())
+    assert vault_data["token"]["access_token"] == "target_renewed_by_agy"
+
+    # Verify original live token was restored!
+    live_data = json.loads(live_token.read_text())
+    assert live_data["token"]["access_token"] == "original_live"
+
+
+def test_refresh_token_fallback_agy_no_agy(tmp_path, monkeypatch):
+    from promux.cli import _refresh_token_fallback_agy, get_storage
+
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PROMUX_HOME", str(promux_home))
+    monkeypatch.setenv("PROMUX_GEMINI_HOME", str(gemini_home))
+
+    storage = get_storage()
+    target_dir = storage.accounts_dir / "target_acct"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_token = target_dir / "antigravity-oauth-token"
+    target_token.write_text(json.dumps({"token": {"access_token": "target_old"}}))
+
+    # Mock shutil.which to say 'agy' does NOT exist
+    monkeypatch.setattr("shutil.which", lambda cmd: None)
+
+    assert _refresh_token_fallback_agy(target_token, storage) is None
+
+
+def test_refresh_token_fallback_agy_no_token_file(tmp_path, monkeypatch):
+    from promux.cli import _refresh_token_fallback_agy, get_storage
+
+    storage = get_storage()
+    non_existent = storage.accounts_dir / "missing" / "token"
+    monkeypatch.setattr("shutil.which", lambda cmd: "/mock/bin/agy")
+
+    assert _refresh_token_fallback_agy(non_existent, storage) is None
+
+
+def test_refresh_token_fallback_agy_when_live_did_not_exist(tmp_path, monkeypatch):
+    import subprocess
+    from promux.cli import _refresh_token_fallback_agy, get_storage
+
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PROMUX_HOME", str(promux_home))
+    monkeypatch.setenv("PROMUX_GEMINI_HOME", str(gemini_home))
+
+    storage = get_storage()
+    live_token = storage.live_token
+    # live_token does NOT exist initially
+    if live_token.exists():
+        live_token.unlink()
+
+    target_dir = storage.accounts_dir / "target_acct"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_token = target_dir / "antigravity-oauth-token"
+    target_token.write_text(json.dumps({"token": {"access_token": "target_old", "expiry": "2020-01-01T00:00:00Z"}}))
+
+    monkeypatch.setattr("shutil.which", lambda cmd: "/mock/bin/agy" if cmd == "agy" else None)
+
+    def mock_run(cmd, capture_output=True, timeout=10, check=False):
+        assert live_token.exists()
+        live_token.write_text(json.dumps({"token": {"access_token": "target_renewed_live_none", "expiry": "2030-01-01T00:00:00Z"}}))
+        return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    new_acc = _refresh_token_fallback_agy(target_token, storage)
+    assert new_acc == "target_renewed_live_none"
+
+    vault_data = json.loads(target_token.read_text())
+    assert vault_data["token"]["access_token"] == "target_renewed_live_none"
+
+    # Verify live_token was cleaned up because it didn't exist originally
+    assert not live_token.exists()
+
+
+def test_refresh_token_fallback_agy_failure_or_timeout(tmp_path, monkeypatch):
+    import subprocess
+    from promux.cli import _refresh_token_fallback_agy, get_storage
+
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PROMUX_HOME", str(promux_home))
+    monkeypatch.setenv("PROMUX_GEMINI_HOME", str(gemini_home))
+
+    storage = get_storage()
+    live_token = storage.live_token
+    live_token.write_text(json.dumps({"token": {"access_token": "original_live"}}))
+
+    target_dir = storage.accounts_dir / "target_acct"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_token = target_dir / "antigravity-oauth-token"
+    target_token.write_text(json.dumps({"token": {"access_token": "target_old", "expiry": "2020-01-01T00:00:00Z"}}))
+
+    monkeypatch.setattr("shutil.which", lambda cmd: "/mock/bin/agy" if cmd == "agy" else None)
+
+    def mock_run_timeout(cmd, capture_output=True, timeout=10, check=False):
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    monkeypatch.setattr("subprocess.run", mock_run_timeout)
+
+    new_acc = _refresh_token_fallback_agy(target_token, storage)
+    assert new_acc is None
+
+    # Target token unchanged
+    vault_data = json.loads(target_token.read_text())
+    assert vault_data["token"]["access_token"] == "target_old"
+
+    # Live token restored
+    live_data = json.loads(live_token.read_text())
+    assert live_data["token"]["access_token"] == "original_live"
+
+
+def test_refresh_token_fallback_agy_same_file(tmp_path, monkeypatch):
+    import subprocess
+    from promux.cli import _refresh_token_fallback_agy, get_storage
+
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PROMUX_HOME", str(promux_home))
+    monkeypatch.setenv("PROMUX_GEMINI_HOME", str(gemini_home))
+
+    storage = get_storage()
+    live_token = storage.live_token
+    live_token.write_text(json.dumps({"token": {"access_token": "live_old", "expiry": "2020-01-01T00:00:00Z"}}))
+
+    monkeypatch.setattr("shutil.which", lambda cmd: "/mock/bin/agy" if cmd == "agy" else None)
+
+    def mock_run(cmd, capture_output=True, timeout=10, check=False):
+        live_token.write_text(json.dumps({"token": {"access_token": "live_renewed", "expiry": "2030-01-01T00:00:00Z"}}))
+        return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    new_acc = _refresh_token_fallback_agy(live_token, storage)
+    assert new_acc == "live_renewed"
+
+    live_data = json.loads(live_token.read_text())
+    assert live_data["token"]["access_token"] == "live_renewed"
+
+
+def test_refresh_token_file_two_tier(tmp_path, monkeypatch):
+    from promux.cli import _refresh_token_file, get_storage
+
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PROMUX_HOME", str(promux_home))
+    monkeypatch.setenv("PROMUX_GEMINI_HOME", str(gemini_home))
+
+    storage = get_storage()
+    token_path = tmp_path / "token"
+    token_data = {"token": {"access_token": "old", "refresh_token": "ref"}}
+
+    # Case 1: Native refresh succeeds
+    monkeypatch.setattr("promux.cli._refresh_token_native", lambda p, td: "tier1_acc")
+    fallback_called = []
+    monkeypatch.setattr("promux.cli._refresh_token_fallback_agy", lambda p, s: fallback_called.append(True) or "tier2_acc")
+
+    res = _refresh_token_file(token_path, token_data, storage=storage)
+    assert res == "tier1_acc"
+    assert len(fallback_called) == 0
+
+    # Case 2: Native fails, no storage provided -> returns None
+    monkeypatch.setattr("promux.cli._refresh_token_native", lambda p, td: None)
+    res_no_storage = _refresh_token_file(token_path, token_data, storage=None)
+    assert res_no_storage is None
+    assert len(fallback_called) == 0
+
+    # Case 3: Native fails, storage provided -> falls back to Tier 2
+    res_with_storage = _refresh_token_file(token_path, token_data, storage=storage)
+    assert res_with_storage == "tier2_acc"
+    assert len(fallback_called) == 1
+
+
+def test_get_or_refresh_access_token_passes_storage(tmp_path, monkeypatch):
+    from promux.cli import _get_or_refresh_access_token, get_storage
+
+    storage = get_storage()
+    token_path = tmp_path / "token"
+    token_data = {
+        "token": {
+            "access_token": "expired_acc",
+            "refresh_token": "ref",
+            "expiry": "2020-01-01T00:00:00Z",
+        }
+    }
+    token_path.write_text(json.dumps(token_data))
+
+    monkeypatch.setattr("promux.cli._refresh_token_native", lambda p, td: None)
+    monkeypatch.setattr("promux.cli._refresh_token_fallback_agy", lambda p, s: "fallback_token_val")
+
+    # When storage passed, fallback succeeds
+    res = _get_or_refresh_access_token(token_path, storage=storage)
+    assert res == "fallback_token_val"

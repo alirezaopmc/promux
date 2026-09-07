@@ -1,6 +1,8 @@
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import sys
 import urllib.parse
 import urllib.request
@@ -13,6 +15,7 @@ from .completion import (
     generate_bash_completion,
     generate_zsh_completion,
 )
+from .lock import file_lock
 from .constants import (
     DEFAULT_COOLDOWN_MINUTES,
     DEFAULT_POLL_SECONDS,
@@ -157,19 +160,111 @@ def _refresh_token_native(token_path: Path, token_data: dict[str, Any]) -> str |
     return None
 
 
-def _refresh_token_file(token_path: Path, token_data: dict[str, Any]) -> str | None:
-    """Attempt to refresh an expired token using its refresh_token."""
-    return _refresh_token_native(token_path, token_data)
+def _refresh_token_fallback_agy(token_path: Path, storage: StorageEngine) -> str | None:
+    """Tier 2: Fallback renewal via headless agy CLI under storage file lock."""
+    if not shutil.which("agy"):
+        return None
+    if not token_path.exists():
+        return None
+
+    try:
+        with file_lock(storage.lock_file):
+            old_data = _read_token_data(token_path)
+            old_acc = _extract_access_token(old_data)
+            old_exp = _extract_expiry(old_data)
+
+            is_same = False
+            try:
+                is_same = token_path.resolve() == storage.live_token.resolve()
+            except Exception:
+                pass
+
+            if is_same:
+                try:
+                    subprocess.run(["agy", "models"], capture_output=True, timeout=10)
+                except (subprocess.SubprocessError, OSError):
+                    pass
+                new_data = _read_token_data(storage.live_token)
+                new_acc = _extract_access_token(new_data)
+                new_exp = _extract_expiry(new_data)
+                if new_acc and (old_acc is None or new_acc != old_acc or new_exp != old_exp):
+                    return new_acc
+                return None
+
+            storage.live_token.parent.mkdir(parents=True, exist_ok=True)
+            backup_path = storage.live_token.with_name(
+                f"{storage.live_token.name}.fallback_bak_{os.getpid()}"
+            )
+            live_existed = storage.live_token.exists()
+            if live_existed:
+                shutil.copy2(storage.live_token, backup_path)
+                backup_path.chmod(0o600)
+
+            refreshed_acc: str | None = None
+            try:
+                shutil.copy2(token_path, storage.live_token)
+                storage.live_token.chmod(0o600)
+
+                try:
+                    subprocess.run(["agy", "models"], capture_output=True, timeout=10)
+                except (subprocess.SubprocessError, OSError):
+                    pass
+
+                new_data = _read_token_data(storage.live_token)
+                new_acc = _extract_access_token(new_data)
+                new_exp = _extract_expiry(new_data)
+                if new_acc and (old_acc is None or new_acc != old_acc or new_exp != old_exp):
+                    tmp_path = token_path.with_suffix(f".tmp_{os.getpid()}")
+                    shutil.copy2(storage.live_token, tmp_path)
+                    tmp_path.chmod(0o600)
+                    os.replace(tmp_path, token_path)
+                    refreshed_acc = new_acc
+            finally:
+                if live_existed:
+                    if backup_path.exists():
+                        os.replace(backup_path, storage.live_token)
+                        storage.live_token.chmod(0o600)
+                else:
+                    if storage.live_token.exists():
+                        storage.live_token.unlink()
+                    if backup_path.exists():
+                        backup_path.unlink()
+
+            return refreshed_acc
+    except Exception:
+        return None
 
 
-def _get_or_refresh_access_token(token_path: Path) -> str | None:
+def _refresh_token_file(
+    token_path: Path,
+    token_data: dict[str, Any],
+    storage: StorageEngine | None = None,
+) -> str | None:
+    """Attempt to refresh an expired token using its refresh_token or agy fallback."""
+    # Tier 1: Native HTTP refresh
+    refreshed = _refresh_token_native(token_path, token_data)
+    if refreshed:
+        return refreshed
+    # Tier 2: Headless agy fallback
+    if storage is not None:
+        return _refresh_token_fallback_agy(token_path, storage)
+    return None
+
+
+def _get_or_refresh_access_token(
+    token_path: Path,
+    storage: StorageEngine | None = None,
+) -> str | None:
     """Get access token, refreshing it if expired and refresh_token is present."""
     token_data = _read_token_data(token_path)
     if not token_data:
         return None
     access_token = _extract_access_token(token_data)
     if _is_token_expired(token_data, buffer_seconds=DEFAULT_TOKEN_EXPIRY_BUFFER_SECONDS):
-        refreshed = _refresh_token_file(token_path, token_data)
+        if storage is not None:
+            refreshed = _refresh_token_file(token_path, token_data, storage=storage)
+        else:
+            refreshed = _refresh_token_file(token_path, token_data)
         if refreshed:
             return refreshed
     return access_token
