@@ -235,19 +235,28 @@ def _refresh_token_fallback_agy(token_path: Path, storage: StorageEngine) -> str
         return None
 
 
+_last_refresh_method: str = "native"
+
+
 def _refresh_token_file(
     token_path: Path,
     token_data: dict[str, Any],
     storage: StorageEngine | None = None,
 ) -> str | None:
     """Attempt to refresh an expired token using its refresh_token or agy fallback."""
+    global _last_refresh_method
+    _last_refresh_method = "failed"
     # Tier 1: Native HTTP refresh
     refreshed = _refresh_token_native(token_path, token_data)
     if refreshed:
+        _last_refresh_method = "native"
         return refreshed
     # Tier 2: Headless agy fallback
     if storage is not None:
-        return _refresh_token_fallback_agy(token_path, storage)
+        refreshed = _refresh_token_fallback_agy(token_path, storage)
+        if refreshed:
+            _last_refresh_method = "fallback (agy)"
+            return refreshed
     return None
 
 
@@ -664,6 +673,150 @@ def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
     return 0
 
 
+def _format_expiry_table(expiry_str: str | None) -> str:
+    """Format an ISO timestamp to 'YYYY-MM-DD HH:MM:SS' for table display."""
+    if not expiry_str:
+        return "-"
+    try:
+        clean = expiry_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return expiry_str
+
+
+def cmd_refresh(
+    storage: StorageEngine,
+    name: str | None,
+    force: bool,
+    json_out: bool,
+) -> int:
+    """Refresh OAuth access token for vault accounts."""
+    active_profile = storage.get_active_profile()
+
+    if name is not None:
+        if not storage.get_account(name):
+            msg = f"Account '{name}' not found in vault"
+            if json_out:
+                print(json.dumps({"error": msg}, indent=2))
+            print(f"Error: {msg}", file=sys.stderr)
+            return 1
+        targets = [name]
+    else:
+        accounts = storage.list_accounts()
+        if not accounts:
+            if json_out:
+                print(json.dumps([], indent=2))
+            else:
+                print("No accounts registered in vault.")
+            return 0
+        targets = [acct.name for acct in accounts]
+
+    results: list[dict[str, Any]] = []
+    any_failed = False
+
+    for target_name in targets:
+        is_active = target_name == active_profile
+        vault_token_path = storage.accounts_dir / target_name / "antigravity-oauth-token"
+
+        # Locate / sync token file:
+        # If target is active profile and storage.live_token exists, check/sync
+        if is_active and storage.live_token.exists():
+            if not vault_token_path.exists():
+                vault_token_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(storage.live_token, vault_token_path)
+                vault_token_path.chmod(0o600)
+            else:
+                live_data = _read_token_data(storage.live_token)
+                vault_data = _read_token_data(vault_token_path)
+                live_exp = _extract_expiry(live_data)
+                vault_exp = _extract_expiry(vault_data)
+                if live_exp and vault_exp and live_exp > vault_exp:
+                    shutil.copy2(storage.live_token, vault_token_path)
+                    vault_token_path.chmod(0o600)
+
+        token_path = vault_token_path
+        token_data = _read_token_data(token_path)
+        if not token_data and is_active and storage.live_token.exists():
+            token_data = _read_token_data(storage.live_token)
+
+        if not token_data:
+            results.append(
+                {
+                    "account": target_name,
+                    "status": "FAILED",
+                    "expiry": None,
+                    "method": "failed",
+                }
+            )
+            any_failed = True
+            continue
+
+        if not force and not _is_token_expired(token_data):
+            results.append(
+                {
+                    "account": target_name,
+                    "status": "UNCHANGED",
+                    "expiry": _extract_expiry(token_data),
+                    "method": "valid",
+                }
+            )
+        else:
+            refreshed = _refresh_token_file(token_path, token_data, storage=storage)
+            if refreshed:
+                method = (
+                    _last_refresh_method
+                    if _last_refresh_method in ("native", "fallback (agy)")
+                    else "native"
+                )
+                new_data = _read_token_data(token_path)
+                new_expiry = _extract_expiry(new_data) or _extract_expiry(token_data)
+                results.append(
+                    {
+                        "account": target_name,
+                        "status": "REFRESHED",
+                        "expiry": new_expiry,
+                        "method": method,
+                    }
+                )
+                # If target is active profile, sync refreshed token to storage.live_token
+                if is_active:
+                    try:
+                        storage.live_token.parent.mkdir(parents=True, exist_ok=True)
+                        tmp_live = storage.live_token.with_suffix(f".tmp_{os.getpid()}")
+                        shutil.copy2(token_path, tmp_live)
+                        tmp_live.chmod(0o600)
+                        os.replace(tmp_live, storage.live_token)
+                    except Exception:
+                        pass
+            else:
+                results.append(
+                    {
+                        "account": target_name,
+                        "status": "FAILED",
+                        "expiry": _extract_expiry(token_data),
+                        "method": "failed",
+                    }
+                )
+                any_failed = True
+
+    if json_out:
+        print(json.dumps(results, indent=2))
+        return 1 if any_failed else 0
+
+    header = f"{'ACCOUNT':<18}{'STATUS':<13}{'EXPIRY (UTC)':<26}{'METHOD'}"
+    divider = "-" * 65
+    print(header)
+    print(divider)
+    for r in results:
+        disp_exp = _format_expiry_table(r["expiry"])
+        print(f"{r['account']:<18}{r['status']:<13}{disp_exp:<26}{r['method']}")
+
+    return 1 if any_failed else 0
+
+
 def cmd_watch(failover: FailoverEngine, poll_seconds: float, cooldown: int | None) -> int:
     gemini_home = None
     if "PROMUX_GEMINI_HOME" in os.environ:
@@ -753,6 +906,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Profile name (default: all profiles in vault)",
     )
 
+    # refresh
+    refresh_p = sub.add_parser(
+        "refresh",
+        parents=[common_parser],
+        help="Refresh OAuth access token for vault accounts",
+    )
+    refresh_p.add_argument(
+        "name",
+        nargs="?",
+        default=None,
+        help="Profile name (default: all profiles in vault)",
+    )
+    refresh_p.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Force token refresh even if not expired",
+    )
+
     # whoami
     sub.add_parser("whoami", parents=[common_parser], help="Show active profile and token status")
 
@@ -812,6 +984,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_next(failover, args.reason, args.cooldown, json_out)
         elif args.command == "quota":
             return cmd_quota(storage, args.name, json_out)
+        elif args.command == "refresh":
+            return cmd_refresh(storage, args.name, args.force, json_out)
         elif args.command == "whoami":
             return cmd_whoami(storage, json_out)
         elif args.command == "remove":

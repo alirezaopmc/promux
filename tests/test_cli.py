@@ -1264,3 +1264,172 @@ def test_get_or_refresh_access_token_passes_storage(tmp_path, monkeypatch):
     # When storage passed, fallback succeeds
     res = _get_or_refresh_access_token(token_path, storage=storage)
     assert res == "fallback_token_val"
+
+
+def test_cli_refresh_single_and_all(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main
+
+    assert main(["save", "acct1", "--email", "a1@test.com"]) == 0
+    assert main(["save", "acct2", "--email", "a2@test.com"]) == 0
+    capsys.readouterr()
+
+    # Mock native refresh
+    monkeypatch.setattr("promux.cli._refresh_token_native", lambda p, td: "refreshed_acc")
+
+    # Refresh specific with --force
+    rc = main(["refresh", "acct1", "--force"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    assert "acct1" in out
+    assert "REFRESHED" in out
+
+    # Refresh all with --json
+    rc = main(["refresh", "--force", "--json"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    data = json.loads(out)
+    assert len(data) == 2
+    assert all(d["status"] == "REFRESHED" for d in data)
+
+
+def test_cli_refresh_unchanged_when_not_expired(tmp_path, sample_token_dict, monkeypatch, capsys):
+    sample_token_dict["token"]["expiry"] = "2030-01-01T00:00:00Z"
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main
+
+    assert main(["save", "acct1", "--email", "a1@test.com"]) == 0
+    capsys.readouterr()
+
+    # Without --force, unexpired token remains UNCHANGED
+    rc = main(["refresh", "acct1"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    assert "acct1" in out
+    assert "UNCHANGED" in out
+    assert "valid" in out
+
+
+def test_cli_refresh_fallback_agy_method(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main
+
+    assert main(["save", "acct1", "--email", "a1@test.com"]) == 0
+    capsys.readouterr()
+
+    monkeypatch.setattr("promux.cli._refresh_token_native", lambda p, td: None)
+    monkeypatch.setattr("promux.cli._refresh_token_fallback_agy", lambda p, s: "agy_acc")
+
+    rc = main(["refresh", "acct1", "--force", "--json"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    data = json.loads(out)
+    assert len(data) == 1
+    assert data[0]["status"] == "REFRESHED"
+    assert data[0]["method"] == "fallback (agy)"
+
+
+def test_cli_refresh_nonexistent_account(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main
+
+    rc = main(["refresh", "nonexistent"])
+    assert rc == 1
+    _, err = capsys.readouterr()
+    assert "nonexistent" in err
+
+    rc_json = main(["refresh", "nonexistent", "--json"])
+    assert rc_json == 1
+    out, _ = capsys.readouterr()
+    data = json.loads(out)
+    assert "error" in data
+
+
+def test_cli_refresh_syncs_to_active_live_token(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main, get_storage
+
+    assert main(["save", "active_acct", "--email", "act@test.com"]) == 0
+    capsys.readouterr()
+
+    storage = get_storage()
+    # Write refreshed token when native refresh is called
+    def mock_refresh_native(token_path, token_data):
+        token_data["token"]["access_token"] = "new_synced_token"
+        token_data["token"]["expiry"] = "2030-01-01T00:00:00Z"
+        token_path.write_text(json.dumps(token_data))
+        return "new_synced_token"
+
+    monkeypatch.setattr("promux.cli._refresh_token_native", mock_refresh_native)
+
+    rc = main(["refresh", "active_acct", "--force"])
+    assert rc == 0
+
+    live_data = json.loads(storage.live_token.read_text())
+    assert live_data["token"]["access_token"] == "new_synced_token"
+
+
+def test_cli_refresh_empty_vault(tmp_path, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch)
+    from promux.cli import main
+
+    rc = main(["refresh"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    assert "No accounts" in out
+
+    rc = main(["refresh", "--json"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    data = json.loads(out)
+    assert data == []
+
+
+def test_cli_refresh_failure_returns_1(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main
+
+    assert main(["save", "fail_acct", "--email", "fail@test.com"]) == 0
+    capsys.readouterr()
+
+    monkeypatch.setattr("promux.cli._refresh_token_native", lambda p, td: None)
+    monkeypatch.setattr("promux.cli._refresh_token_fallback_agy", lambda p, s: None)
+
+    rc = main(["refresh", "fail_acct", "--force"])
+    assert rc == 1
+    out, _ = capsys.readouterr()
+    assert "fail_acct" in out
+    assert "FAILED" in out
+    assert "failed" in out
+
+    rc_json = main(["refresh", "fail_acct", "--force", "--json"])
+    assert rc_json == 1
+    out_json, _ = capsys.readouterr()
+    data = json.loads(out_json)
+    assert len(data) == 1
+    assert data[0]["status"] == "FAILED"
+    assert data[0]["method"] == "failed"
+
+
+def test_cli_refresh_missing_token_file(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main, get_storage
+
+    assert main(["save", "ghost", "--email", "ghost@test.com"]) == 0
+    capsys.readouterr()
+
+    storage = get_storage()
+    # Delete token file and live token
+    vault_token = storage.accounts_dir / "ghost" / "antigravity-oauth-token"
+    if vault_token.exists():
+        vault_token.unlink()
+    if storage.live_token.exists():
+        storage.live_token.unlink()
+
+    rc = main(["refresh", "ghost", "--force"])
+    assert rc == 1
+    out, _ = capsys.readouterr()
+    assert "ghost" in out
+    assert "FAILED" in out
+
+
