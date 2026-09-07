@@ -1692,20 +1692,21 @@ def test_quota_revoked_token_error_handling(tmp_path, sample_token_dict, monkeyp
     live_data["token"]["expiry"] = "2020-01-01T00:00:00Z"
     storage.live_token.write_text(json.dumps(live_data))
 
-    # Mock native refresh to simulate Google invalid_grant
+    # Mock native HTTP call to return Google invalid_grant error
+    import io
     import urllib.error
 
-    def mock_refresh_revoked(p, td):
-        # Trigger revoked state
+    def mock_urlopen_revoked(req, timeout=10):
+        err_bytes = b'{"error": "invalid_grant", "error_description": "Token has been expired or revoked."}'
         raise urllib.error.HTTPError(
             url="https://oauth2.googleapis.com/token",
             code=400,
             msg="Bad Request",
             hdrs={},  # type: ignore[arg-type]
-            fp=None,  # type: ignore[arg-type]
+            fp=io.BytesIO(err_bytes),
         )
 
-    monkeypatch.setattr("promux.cli._last_refresh_revoked", True)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_revoked)
 
     def mock_get_quota(self, pid):
         raise Exception("HTTP Error 401: Unauthorized")
@@ -1719,3 +1720,78 @@ def test_quota_revoked_token_error_handling(tmp_path, sample_token_dict, monkeyp
     res = json.loads(out)
     assert "revoked" in res["error"].lower()
     assert "re-authenticate via 'agy'" in res["error"].lower()
+
+
+def test_quota_multi_profile_does_not_leak_revoked_state(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main, get_storage
+    from promux.quota import QuotaClient
+    import io
+    import urllib.error
+
+    # Create account 1 (acct1)
+    assert main(["save", "acct1"]) == 0
+    capsys.readouterr()
+
+    # Create account 2 (acct2) with valid unexpired token
+    token2 = dict(sample_token_dict)
+    token2["token"] = dict(sample_token_dict["token"])
+    token2["token"]["access_token"] = "valid_acct2_token"
+    token2["token"]["expiry"] = "2030-01-01T00:00:00Z"
+    gemini_home = tmp_path / ".gemini"
+    (gemini_home / "antigravity-oauth-token").write_text(json.dumps(token2))
+    assert main(["save", "acct2"]) == 0
+    capsys.readouterr()
+
+    storage = get_storage()
+
+    # Expire active profile (acct1) live token so refresh is attempted
+    live_data = json.loads(storage.live_token.read_text())
+    live_data["token"]["access_token"] = "revoked_acct1_token"
+    live_data["token"]["expiry"] = "2020-01-01T00:00:00Z"
+    storage.live_token.write_text(json.dumps(live_data))
+
+    # Ensure standby profile (acct2) vault token is valid and unexpired
+    vault_acct2 = storage.accounts_dir / "acct2" / "antigravity-oauth-token"
+    vault_acct2.write_text(json.dumps(token2))
+
+    # Mock urlopen to fail on refresh with invalid_grant
+    def mock_urlopen_revoked(req, timeout=10):
+        err_bytes = b'{"error": "invalid_grant", "error_description": "Token has been expired or revoked."}'
+        raise urllib.error.HTTPError(
+            url="https://oauth2.googleapis.com/token",
+            code=400,
+            msg="Bad Request",
+            hdrs={},  # type: ignore[arg-type]
+            fp=io.BytesIO(err_bytes),
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_revoked)
+
+    def mock_load_metadata(self):
+        return {"project_id": "proj-multi"}
+
+    def mock_get_quota(self, pid):
+        if self.token == "valid_acct2_token":
+            return QuotaSummary(gemini_5h_remaining=0.99)
+        raise Exception("HTTP Error 401: Unauthorized")
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", mock_load_metadata)
+    monkeypatch.setattr(QuotaClient, "get_quota", mock_get_quota)
+
+    # Run multi-profile quota query
+    rc = main(["quota", "--json"])
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    res = json.loads(out)
+    assert len(res) == 2
+
+    # acct1 had revoked token and should have error
+    r1 = next(r for r in res if r["account"] == "acct1")
+    assert "error" in r1
+    assert "revoked" in r1["error"].lower()
+
+    # acct2 had valid token and should succeed despite acct1 having set revocation flag
+    r2 = next(r for r in res if r["account"] == "acct2")
+    assert "error" not in r2
+    assert r2["gemini"]["5h_remaining"] == 0.99

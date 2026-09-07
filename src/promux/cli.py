@@ -156,6 +156,7 @@ def _is_token_expired(
 
 def _refresh_token_native(token_path: Path, token_data: dict[str, Any]) -> str | None:
     """Tier 1: Execute direct HTTP OAuth refresh using Google OAuth token endpoint."""
+    global _last_refresh_revoked
     if not isinstance(token_data, dict):
         return None
     tok = token_data.get("token")
@@ -300,6 +301,7 @@ def _refresh_token_file(
     """Attempt to refresh an expired token using its refresh_token or agy fallback."""
     global _last_refresh_method, _last_refresh_revoked
     _last_refresh_method = "failed"
+    _last_refresh_revoked = False
     # Tier 1: Native HTTP refresh
     try:
         refreshed = _refresh_token_native(token_path, token_data)
@@ -536,6 +538,9 @@ def _fetch_account_quota(
     Returns:
         tuple of (QuotaSummary or None, project_id or None, error_message or None)
     """
+    global _last_refresh_revoked
+    _last_refresh_revoked = False
+
     acct = storage.get_account(target_name)
     if not acct:
         return None, None, f"Account '{target_name}' not found in vault."
