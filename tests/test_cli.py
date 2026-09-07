@@ -844,3 +844,31 @@ def test_cli_quota_all_profiles_with_isolated_error(
     acc2_rec = next(d for d in data if d["account"] == "acc2")
     assert "error" in acc2_rec
     assert "401" in acc2_rec["error"]
+
+
+def test_constants_default_credentials(monkeypatch):
+    import importlib
+    import promux.constants
+
+    monkeypatch.delenv("PROMUX_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("PROMUX_OAUTH_CLIENT_SECRET", raising=False)
+    importlib.reload(promux.constants)
+
+    assert "apps.googleusercontent.com" in promux.constants.OAUTH_CLIENT_ID
+    assert promux.constants.OAUTH_CLIENT_SECRET.startswith("GOCSPX-")
+    assert promux.constants.DEFAULT_TOKEN_EXPIRY_BUFFER_SECONDS == 60
+    assert promux.constants.DEFAULT_PROACTIVE_REFRESH_INTERVAL_SECONDS == 900
+
+
+def test_constants_env_override(monkeypatch):
+    import importlib
+    import promux.constants
+
+    monkeypatch.setenv("PROMUX_OAUTH_CLIENT_ID", "custom-client-id")
+    monkeypatch.setenv("PROMUX_OAUTH_CLIENT_SECRET", "custom-client-secret")
+    importlib.reload(promux.constants)
+
+    assert promux.constants.OAUTH_CLIENT_ID == "custom-client-id"
+    assert promux.constants.OAUTH_CLIENT_SECRET == "custom-client-secret"
+
+
