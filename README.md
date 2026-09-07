@@ -24,6 +24,7 @@ Operating as a zero-intrusion filesystem overlay, `promux` keeps your active con
   - **Reactive:** Lightweight daemon tails `cli.log` and session logs to detect quota exhaustion events (`Individual quota reached`, `RESOURCE_EXHAUSTED 429`) and reset hints (`Resets in ~Xh Ym`) in real time.
 - **POSIX Concurrency Guarantees:** File locking (`fcntl.flock`) and atomic file replacement (`.tmp` + `os.replace`) prevent race conditions between CLI commands, background daemons, and `agy` operations.
 - **LRU Standby Failover:** Intelligently rotates to the least-recently used eligible standby account when the active profile is exhausted, placing exhausted accounts into a temporary cooldown window.
+- **Two-Tier Resilient Token Renewal:** Direct native Google OAuth refresh using official Antigravity client credentials with automatic token rotation; seamless headless `agy` fallback under file mutex. Proactively and automatically renews tokens during `promux switch`, `promux quota`, `promux watch`, and `promux refresh`.
 
 ---
 
@@ -225,6 +226,23 @@ Displays details of the active profile, including account name, email, OAuth tok
 ```bash
 promux whoami
 promux whoami --json
+```
+
+### `promux refresh [name] [--force]`
+Inspects and refreshes OAuth access tokens across all vault accounts (or a specific account).
+- Renews expired or near-expiry tokens using Tier 1 native OAuth refresh, falling back to Tier 2 headless `agy`.
+- Handles Google OAuth refresh token rotation and syncs active account tokens to `~/.gemini/antigravity-cli/antigravity-oauth-token` atomically.
+- `--force`: Force renewal even if the token has not yet reached its expiration buffer.
+
+```bash
+# Refresh all accounts in vault
+promux refresh
+
+# Refresh all accounts in JSON format
+promux refresh --json
+
+# Force refresh a single account
+promux refresh backup1 --force
 ```
 
 ### `promux remove <name>`
