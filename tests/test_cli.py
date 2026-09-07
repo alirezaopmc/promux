@@ -858,6 +858,8 @@ def test_constants_default_credentials(monkeypatch):
     assert promux.constants.OAUTH_CLIENT_SECRET.startswith("GOCSPX-")
     assert promux.constants.DEFAULT_TOKEN_EXPIRY_BUFFER_SECONDS == 60
     assert promux.constants.DEFAULT_PROACTIVE_REFRESH_INTERVAL_SECONDS == 900
+    monkeypatch.undo()
+    importlib.reload(promux.constants)
 
 
 def test_constants_env_override(monkeypatch):
@@ -870,5 +872,162 @@ def test_constants_env_override(monkeypatch):
 
     assert promux.constants.OAUTH_CLIENT_ID == "custom-client-id"
     assert promux.constants.OAUTH_CLIENT_SECRET == "custom-client-secret"
+    monkeypatch.undo()
+    importlib.reload(promux.constants)
+
+
+def test_is_token_expired_buffer():
+    from datetime import datetime, timedelta, timezone
+    from promux.cli import _is_token_expired
+
+    now = datetime.now(timezone.utc)
+    # Token expiring in 30s is expired under 60s buffer
+    tok_near = {"token": {"expiry": (now + timedelta(seconds=30)).isoformat()}}
+    assert _is_token_expired(tok_near, buffer_seconds=60) is True
+
+    # Token expiring in 120s is NOT expired under 60s buffer
+    tok_far = {"token": {"expiry": (now + timedelta(seconds=120)).isoformat()}}
+    assert _is_token_expired(tok_far, buffer_seconds=60) is False
+
+    # Default buffer_seconds is 60s
+    assert _is_token_expired(tok_near) is True
+    assert _is_token_expired(tok_far) is False
+
+    # Missing or invalid expiry
+    assert _is_token_expired({}) is True
+    assert _is_token_expired({"token": {}}) is True
+    assert _is_token_expired(None) is True
+    assert _is_token_expired({"token": {"expiry": "invalid-datetime"}}) is True
+
+
+def test_native_refresh_updates_refresh_token_if_provided(tmp_path, monkeypatch):
+    from promux.cli import _refresh_token_native
+
+    token_path = tmp_path / "antigravity-oauth-token"
+    token_data = {
+        "token": {
+            "access_token": "old_acc",
+            "refresh_token": "old_refresh",
+            "expiry": "2020-01-01T00:00:00Z",
+        },
+        "auth_method": "consumer",
+    }
+    token_path.write_text(json.dumps(token_data))
+
+    class MockResp:
+        def read(self):
+            return json.dumps(
+                {
+                    "access_token": "new_acc",
+                    "refresh_token": "rotated_refresh",
+                    "expires_in": 3600,
+                }
+            ).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=10: MockResp())
+
+    new_acc = _refresh_token_native(token_path, token_data)
+    assert new_acc == "new_acc"
+
+    saved = json.loads(token_path.read_text())
+    assert saved["token"]["access_token"] == "new_acc"
+    assert saved["token"]["refresh_token"] == "rotated_refresh"
+    assert saved["auth_method"] == "consumer"
+    assert (token_path.stat().st_mode & 0o777) == 0o600
+
+
+def test_native_refresh_keeps_existing_refresh_token_if_not_in_response(tmp_path, monkeypatch):
+    from promux.cli import _refresh_token_native
+
+    token_path = tmp_path / "antigravity-oauth-token"
+    token_data = {
+        "token": {
+            "access_token": "old_acc",
+            "refresh_token": "old_refresh",
+            "expiry": "2020-01-01T00:00:00Z",
+        },
+    }
+    token_path.write_text(json.dumps(token_data))
+
+    class MockResp:
+        def read(self):
+            return json.dumps(
+                {
+                    "access_token": "new_acc_only",
+                    "expires_in": 3600,
+                }
+            ).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=10: MockResp())
+
+    new_acc = _refresh_token_native(token_path, token_data)
+    assert new_acc == "new_acc_only"
+
+    saved = json.loads(token_path.read_text())
+    assert saved["token"]["access_token"] == "new_acc_only"
+    assert saved["token"]["refresh_token"] == "old_refresh"
+
+
+def test_native_refresh_failure_handling(tmp_path, monkeypatch):
+    from promux.cli import _refresh_token_native
+
+    token_path = tmp_path / "antigravity-oauth-token"
+
+    # Missing refresh_token in token_data
+    assert _refresh_token_native(token_path, {"token": {"access_token": "acc"}}) is None
+
+    # Invalid token structure
+    assert _refresh_token_native(token_path, {"token": "not-a-dict"}) is None
+
+    # HTTP / Network error during urlopen
+    token_data = {
+        "token": {
+            "access_token": "old_acc",
+            "refresh_token": "old_refresh",
+            "expiry": "2020-01-01T00:00:00Z",
+        }
+    }
+    token_path.write_text(json.dumps(token_data))
+
+    def mock_urlopen_err(req, timeout=10):
+        raise ConnectionError("Network unreachable")
+
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_err)
+    assert _refresh_token_native(token_path, token_data) is None
+
+
+def test_get_or_refresh_access_token_uses_buffer(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from promux.cli import _get_or_refresh_access_token
+
+    token_path = tmp_path / "test-token"
+    # Token expiring in 30 seconds (within default 60s buffer)
+    near_expiry = (datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat()
+    token_data = {
+        "token": {
+            "access_token": "old_acc",
+            "refresh_token": "ref_tok",
+            "expiry": near_expiry,
+        }
+    }
+    token_path.write_text(json.dumps(token_data))
+
+    monkeypatch.setattr("promux.cli._refresh_token_file", lambda p, td: "buffer_refreshed_acc")
+
+    token = _get_or_refresh_access_token(token_path)
+    assert token == "buffer_refreshed_acc"
+
 
 

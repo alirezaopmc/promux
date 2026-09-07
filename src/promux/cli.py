@@ -16,6 +16,7 @@ from .completion import (
 from .constants import (
     DEFAULT_COOLDOWN_MINUTES,
     DEFAULT_POLL_SECONDS,
+    DEFAULT_TOKEN_EXPIRY_BUFFER_SECONDS,
     OAUTH_CLIENT_ID,
     OAUTH_CLIENT_SECRET,
     OAUTH_TOKEN_URL,
@@ -90,8 +91,31 @@ def _get_oauth_credentials() -> tuple[str, str]:
     return client_id, client_secret
 
 
-def _refresh_token_file(token_path: Path, token_data: dict[str, Any]) -> str | None:
-    """Attempt to refresh an expired token using its refresh_token."""
+def _is_token_expired(
+    token_data: dict[str, Any] | None,
+    buffer_seconds: int = DEFAULT_TOKEN_EXPIRY_BUFFER_SECONDS,
+) -> bool:
+    """Check if token is expired or within buffer_seconds of expiration."""
+    if not token_data or not isinstance(token_data, dict):
+        return True
+    expiry_str = _extract_expiry(token_data)
+    if not expiry_str or not isinstance(expiry_str, str):
+        return True
+    try:
+        clean_exp = expiry_str.replace("Z", "+00:00")
+        exp_dt = datetime.fromisoformat(clean_exp)
+        if exp_dt.tzinfo is None:
+            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        return now + timedelta(seconds=buffer_seconds) >= exp_dt
+    except Exception:
+        return True
+
+
+def _refresh_token_native(token_path: Path, token_data: dict[str, Any]) -> str | None:
+    """Tier 1: Execute direct HTTP OAuth refresh using Google OAuth token endpoint."""
+    if not isinstance(token_data, dict):
+        return None
     tok = token_data.get("token")
     if not isinstance(tok, dict):
         return None
@@ -120,6 +144,8 @@ def _refresh_token_file(token_path: Path, token_data: dict[str, Any]) -> str | N
             expires_in = res.get("expires_in", 3600) if isinstance(res, dict) else 3600
             now = datetime.now(timezone.utc)
             tok["expiry"] = (now + timedelta(seconds=expires_in)).isoformat().replace("+00:00", "Z")
+            if isinstance(res, dict) and "refresh_token" in res and isinstance(res["refresh_token"], str):
+                tok["refresh_token"] = res["refresh_token"]
             tmp_path = token_path.with_suffix(".tmp")
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(token_data, f, indent=2)
@@ -131,23 +157,18 @@ def _refresh_token_file(token_path: Path, token_data: dict[str, Any]) -> str | N
     return None
 
 
+def _refresh_token_file(token_path: Path, token_data: dict[str, Any]) -> str | None:
+    """Attempt to refresh an expired token using its refresh_token."""
+    return _refresh_token_native(token_path, token_data)
+
+
 def _get_or_refresh_access_token(token_path: Path) -> str | None:
     """Get access token, refreshing it if expired and refresh_token is present."""
     token_data = _read_token_data(token_path)
     if not token_data:
         return None
     access_token = _extract_access_token(token_data)
-    expiry_str = _extract_expiry(token_data)
-    is_expired = False
-    if expiry_str:
-        try:
-            clean_exp = expiry_str.replace("Z", "").split("+")[0]
-            exp_dt = datetime.fromisoformat(clean_exp).replace(tzinfo=timezone.utc)
-            if datetime.now(timezone.utc) >= exp_dt:
-                is_expired = True
-        except Exception:
-            pass
-    if is_expired:
+    if _is_token_expired(token_data, buffer_seconds=DEFAULT_TOKEN_EXPIRY_BUFFER_SECONDS):
         refreshed = _refresh_token_file(token_path, token_data)
         if refreshed:
             return refreshed
