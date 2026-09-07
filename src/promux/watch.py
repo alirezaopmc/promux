@@ -38,11 +38,13 @@ class LogWatcher:
         log_files: list[Path] | None = None,
         poll_seconds: float = DEFAULT_POLL_SECONDS,
         gemini_home: Path | None = None,
+        token_check_interval: float = 900.0,
     ):
         self.failover = failover
         self._custom_log_files = log_files
         self.poll_seconds = poll_seconds
         self.gemini_home = Path(gemini_home) if gemini_home else None
+        self.token_check_interval = token_check_interval
         self.offsets: dict[Path, int] = {}
         self.inodes: dict[Path, int] = {}
         self.running = False
@@ -142,6 +144,52 @@ class LogWatcher:
                 continue
         return matches
 
+    def check_and_renew_tokens(self, expiry_threshold_seconds: int = 600) -> list[str]:
+        storage = getattr(self.failover, "storage", None)
+        if storage is None:
+            return []
+
+        from . import cli
+
+        active_profile = storage.get_active_profile()
+        renewed_accounts: list[str] = []
+
+        for acct in storage.list_accounts():
+            name = acct.name if hasattr(acct, "name") else str(acct)
+            vault_token_path = storage.accounts_dir / name / "antigravity-oauth-token"
+            is_active = name == active_profile
+
+            if is_active and storage.live_token.exists():
+                token_path = storage.live_token
+                token_data = cli._read_token_data(token_path)
+                if not token_data and vault_token_path.exists():
+                    token_path = vault_token_path
+                    token_data = cli._read_token_data(token_path)
+            else:
+                token_path = vault_token_path
+                token_data = cli._read_token_data(token_path)
+
+            if not token_data:
+                continue
+
+            if cli._is_token_expired(token_data, buffer_seconds=expiry_threshold_seconds):
+                refreshed = cli._refresh_token_file(token_path, token_data, storage=storage)
+                if refreshed:
+                    if is_active:
+                        if token_path == storage.live_token:
+                            cli._sync_active_tokens(storage.live_token, vault_token_path)
+                        else:
+                            cli._sync_active_tokens(vault_token_path, storage.live_token)
+                    renewed_accounts.append(name)
+            elif is_active and token_path == storage.live_token and vault_token_path.exists():
+                vault_data = cli._read_token_data(vault_token_path)
+                if vault_data and cli._is_token_expired(
+                    vault_data, buffer_seconds=expiry_threshold_seconds
+                ):
+                    cli._sync_active_tokens(storage.live_token, vault_token_path)
+
+        return renewed_accounts
+
     def run_forever(
         self,
         on_match: Callable[[LogMatch], None] | None = None,
@@ -152,11 +200,21 @@ class LogWatcher:
         if not self.offsets:
             self.init_offsets()
 
+        last_token_check = 0.0
         iterations = 0
         while self.running:
             if max_iterations is not None and iterations >= max_iterations:
                 break
             iterations += 1
+
+            now = time.time()
+            if now - last_token_check >= self.token_check_interval:
+                try:
+                    self.check_and_renew_tokens()
+                except Exception:
+                    pass
+                last_token_check = now
+
             try:
                 matches = self.run_once()
                 for m in matches:

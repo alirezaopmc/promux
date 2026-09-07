@@ -293,3 +293,256 @@ def test_log_watcher_dynamic_log_discovery(tmp_path):
 
     # On next poll loop, it is discovered dynamically!
     assert cli_log in watcher.get_log_files()
+
+
+def test_watch_proactive_token_renewal(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime, timedelta, timezone
+    from promux.failover import FailoverEngine
+    from promux.storage import StorageEngine
+
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True, exist_ok=True)
+    storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
+    failover = FailoverEngine(storage)
+
+    # Create account expiring in 5 minutes
+    acct_dir = storage.accounts_dir / "near_exp"
+    acct_dir.mkdir(parents=True, exist_ok=True)
+    tok_file = acct_dir / "antigravity-oauth-token"
+    tok_file.write_text(
+        json.dumps(
+            {
+                "token": {
+                    "access_token": "near_acc",
+                    "expiry": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+                }
+            }
+        )
+    )
+    state = storage.load_state()
+    state["accounts"]["near_exp"] = {"name": "near_exp", "enabled": True}
+    storage.save_state(state)
+
+    watcher = LogWatcher(failover=failover, poll_seconds=0.1, gemini_home=gemini_home)
+
+    monkeypatch.setattr(
+        "promux.cli._refresh_token_file",
+        lambda p, td, storage=None: "renewed_by_watch",
+    )
+
+    renewed = watcher.check_and_renew_tokens(expiry_threshold_seconds=600)
+    assert "near_exp" in renewed
+
+
+def test_watch_check_and_renew_tokens_active_profile_sync(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime, timedelta, timezone
+    from promux.failover import FailoverEngine
+    from promux.storage import StorageEngine
+
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True, exist_ok=True)
+    storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
+    failover = FailoverEngine(storage)
+
+    # Active profile "act1"
+    acct_dir = storage.accounts_dir / "act1"
+    acct_dir.mkdir(parents=True, exist_ok=True)
+    vault_tok = acct_dir / "antigravity-oauth-token"
+    live_tok = storage.live_token
+
+    exp_str = (datetime.now(timezone.utc) + timedelta(minutes=3)).isoformat()
+    old_data = {
+        "token": {
+            "access_token": "old_live",
+            "refresh_token": "rt_123",
+            "expiry": exp_str,
+        }
+    }
+    live_tok.write_text(json.dumps(old_data))
+    vault_tok.write_text(json.dumps(old_data))
+
+    state = storage.load_state()
+    state["accounts"]["act1"] = {"name": "act1", "enabled": True}
+    state["active"] = "act1"
+    storage.save_state(state)
+
+    watcher = LogWatcher(failover=failover, poll_seconds=0.1, gemini_home=gemini_home)
+
+    def fake_refresh(p, td, storage=None):
+        new_exp = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        new_td = {
+            "token": {
+                "access_token": "renewed_access",
+                "refresh_token": "rt_123",
+                "expiry": new_exp,
+            }
+        }
+        p.write_text(json.dumps(new_td))
+        return "renewed_access"
+
+    monkeypatch.setattr("promux.cli._refresh_token_file", fake_refresh)
+
+    renewed = watcher.check_and_renew_tokens(expiry_threshold_seconds=600)
+    assert renewed == ["act1"]
+    vault_data = json.loads(vault_tok.read_text())
+    live_data = json.loads(live_tok.read_text())
+    assert vault_data["token"]["access_token"] == "renewed_access"
+    assert live_data["token"]["access_token"] == "renewed_access"
+
+
+def test_watch_check_and_renew_tokens_skips_valid_tokens(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime, timedelta, timezone
+    from promux.failover import FailoverEngine
+    from promux.storage import StorageEngine
+
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True, exist_ok=True)
+    storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
+    failover = FailoverEngine(storage)
+
+    acct_dir = storage.accounts_dir / "valid_acc"
+    acct_dir.mkdir(parents=True, exist_ok=True)
+    tok_file = acct_dir / "antigravity-oauth-token"
+    tok_file.write_text(
+        json.dumps(
+            {
+                "token": {
+                    "access_token": "valid_token",
+                    "expiry": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+                }
+            }
+        )
+    )
+    state = storage.load_state()
+    state["accounts"]["valid_acc"] = {"name": "valid_acc", "enabled": True}
+    storage.save_state(state)
+
+    watcher = LogWatcher(failover=failover, gemini_home=gemini_home)
+
+    refresh_called = []
+    monkeypatch.setattr(
+        "promux.cli._refresh_token_file",
+        lambda p, td, storage=None: refresh_called.append(p),
+    )
+
+    renewed = watcher.check_and_renew_tokens(expiry_threshold_seconds=600)
+    assert renewed == []
+    assert len(refresh_called) == 0
+
+
+def test_watch_check_and_renew_tokens_no_storage():
+    failover = FakeFailover()
+    watcher = LogWatcher(failover=failover)
+    assert watcher.check_and_renew_tokens() == []
+
+
+def test_watch_run_forever_invokes_check_and_renew():
+    class DummyFailover:
+        pass
+
+    watcher = LogWatcher(failover=DummyFailover(), poll_seconds=0.01, token_check_interval=0.02)
+    called = []
+
+    def fake_check_and_renew():
+        called.append(True)
+        return []
+
+    watcher.check_and_renew_tokens = fake_check_and_renew
+    watcher.run_forever(max_iterations=2)
+
+    assert len(called) >= 1
+
+
+def test_watch_check_and_renew_tokens_standby_account(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime, timedelta, timezone
+    from promux.failover import FailoverEngine
+    from promux.storage import StorageEngine
+
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True, exist_ok=True)
+    storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
+    failover = FailoverEngine(storage)
+
+    # Active profile "active_acc" (valid for 5 hours)
+    acct_act = storage.accounts_dir / "active_acc"
+    acct_act.mkdir(parents=True, exist_ok=True)
+    (acct_act / "antigravity-oauth-token").write_text(
+        json.dumps(
+            {
+                "token": {
+                    "access_token": "act_tok",
+                    "expiry": (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat(),
+                }
+            }
+        )
+    )
+    storage.live_token.write_text(
+        json.dumps(
+            {
+                "token": {
+                    "access_token": "act_tok",
+                    "expiry": (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat(),
+                }
+            }
+        )
+    )
+
+    # Standby profile "standby_acc" (near expiry)
+    acct_stb = storage.accounts_dir / "standby_acc"
+    acct_stb.mkdir(parents=True, exist_ok=True)
+    stb_tok = acct_stb / "antigravity-oauth-token"
+    stb_tok.write_text(
+        json.dumps(
+            {
+                "token": {
+                    "access_token": "old_stb",
+                    "expiry": (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
+                }
+            }
+        )
+    )
+
+    state = storage.load_state()
+    state["accounts"]["active_acc"] = {"name": "active_acc", "enabled": True}
+    state["accounts"]["standby_acc"] = {"name": "standby_acc", "enabled": True}
+    state["active"] = "active_acc"
+    storage.save_state(state)
+
+    watcher = LogWatcher(failover=failover, gemini_home=gemini_home)
+
+    def fake_refresh(p, td, storage=None):
+        assert "standby_acc" in str(p)
+        p.write_text(
+            json.dumps(
+                {
+                    "token": {
+                        "access_token": "new_stb",
+                        "expiry": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+                    }
+                }
+            )
+        )
+        return "new_stb"
+
+    monkeypatch.setattr("promux.cli._refresh_token_file", fake_refresh)
+
+    renewed = watcher.check_and_renew_tokens(expiry_threshold_seconds=600)
+    assert renewed == ["standby_acc"]
+
+    # Standby vault updated
+    stb_data = json.loads(stb_tok.read_text())
+    assert stb_data["token"]["access_token"] == "new_stb"
+
+    # Live token MUST NOT be touched
+    live_data = json.loads(storage.live_token.read_text())
+    assert live_data["token"]["access_token"] == "act_tok"
+
+
