@@ -133,6 +133,20 @@ def _get_oauth_credentials() -> tuple[str, str]:
     return client_id, client_secret
 
 
+def _parse_token_expiry_dt(expiry_str: str | None) -> datetime | None:
+    """Parse ISO8601 expiry string into timezone-aware UTC datetime."""
+    if not expiry_str or not isinstance(expiry_str, str):
+        return None
+    try:
+        clean_exp = expiry_str.replace("Z", "+00:00")
+        exp_dt = datetime.fromisoformat(clean_exp)
+        if exp_dt.tzinfo is None:
+            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+        return exp_dt
+    except Exception:
+        return None
+
+
 def _is_token_expired(
     token_data: dict[str, Any] | None,
     buffer_seconds: int = DEFAULT_TOKEN_EXPIRY_BUFFER_SECONDS,
@@ -141,17 +155,11 @@ def _is_token_expired(
     if not token_data or not isinstance(token_data, dict):
         return True
     expiry_str = _extract_expiry(token_data)
-    if not expiry_str or not isinstance(expiry_str, str):
+    exp_dt = _parse_token_expiry_dt(expiry_str)
+    if exp_dt is None:
         return True
-    try:
-        clean_exp = expiry_str.replace("Z", "+00:00")
-        exp_dt = datetime.fromisoformat(clean_exp)
-        if exp_dt.tzinfo is None:
-            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        return now + timedelta(seconds=buffer_seconds) >= exp_dt
-    except Exception:
-        return True
+    now = datetime.now(timezone.utc)
+    return now + timedelta(seconds=buffer_seconds) >= exp_dt
 
 
 def _refresh_token_native(token_path: Path, token_data: dict[str, Any]) -> str | None:
@@ -256,8 +264,10 @@ def _refresh_token_fallback_agy(token_path: Path, storage: StorageEngine) -> str
 
             refreshed_acc: str | None = None
             try:
-                shutil.copy2(token_path, storage.live_token)
-                storage.live_token.chmod(0o600)
+                tmp_live = storage.live_token.with_name(f".tmp_live_{os.getpid()}")
+                shutil.copy2(token_path, tmp_live)
+                tmp_live.chmod(0o600)
+                os.replace(tmp_live, storage.live_token)
 
                 try:
                     subprocess.run(["agy", "models"], capture_output=True, timeout=10)
@@ -855,9 +865,9 @@ def cmd_refresh(
                 # Check that storage.live_token and vault_token_path share the same refresh_token
                 # before syncing to ensure token identity.
                 if not (lr and vr and lr != vr):
-                    live_exp = _extract_expiry(live_data)
-                    vault_exp = _extract_expiry(vault_data)
-                    if live_exp and vault_exp and live_exp > vault_exp:
+                    live_dt = _parse_token_expiry_dt(_extract_expiry(live_data))
+                    vault_dt = _parse_token_expiry_dt(_extract_expiry(vault_data))
+                    if live_dt and vault_dt and live_dt > vault_dt:
                         _atomic_copy_token(storage.live_token, vault_token_path)
 
         token_path = vault_token_path
