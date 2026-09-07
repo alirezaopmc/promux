@@ -1479,4 +1479,31 @@ def test_cli_refresh_identity_mismatch_prevents_sync(tmp_path, sample_token_dict
     assert vault_data["token"]["refresh_token"] == "mock_refresh_token"
 
 
+def test_cli_switch_auto_refreshes_expired(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main, get_storage
+
+    assert main(["save", "acct1"]) == 0
+
+    token2 = dict(sample_token_dict)
+    token2["token"] = dict(sample_token_dict["token"])
+    token2["token"]["access_token"] = "expired_acct2"
+    token2["token"]["expiry"] = "2020-01-01T00:00:00Z"
+    gemini_home = tmp_path / ".gemini"
+    (gemini_home / "antigravity-oauth-token").write_text(json.dumps(token2))
+
+    assert main(["save", "acct2"]) == 0
+    assert main(["switch", "acct1"]) == 0
+    capsys.readouterr()
+
+    monkeypatch.setattr("promux.cli._get_or_refresh_access_token", lambda p, storage=None: "refreshed_acct2")
+
+    rc = main(["switch", "acct2"])
+    assert rc == 0
+    storage = get_storage()
+    live_data = json.loads(storage.live_token.read_text())
+    assert live_data["token"]["access_token"] == "refreshed_acct2"
+
+
+
 

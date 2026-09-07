@@ -269,3 +269,164 @@ def test_storage_transaction_context_manager(tmp_path):
 
     loaded_after_error = storage.load_state()
     assert "bad_acc" not in loaded_after_error["accounts"]
+
+
+def test_switch_profile_auto_refreshes_expired_target(tmp_path, sample_token_dict, monkeypatch):
+    from datetime import datetime, timezone
+    from promux.storage import StorageEngine
+
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True, exist_ok=True)
+    live_token = gemini_home / "antigravity-oauth-token"
+    live_token.write_text(json.dumps(sample_token_dict))
+
+    storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
+    storage.save_profile("profile_a")
+
+    # Profile B with expired token
+    token_b = dict(sample_token_dict)
+    token_b["token"] = {
+        "access_token": "expired_b",
+        "refresh_token": "ref_b",
+        "expiry": "2020-01-01T00:00:00Z",
+    }
+    live_token.write_text(json.dumps(token_b))
+    storage.save_profile("profile_b")
+
+    # Switch to profile A
+    storage.switch_profile("profile_a")
+
+    # Mock refresh to return refreshed token for profile_b
+    monkeypatch.setattr("promux.cli._get_or_refresh_access_token", lambda p, storage=None: "new_b_token")
+
+    # Switch to profile B - should auto-refresh
+    success = storage.switch_profile("profile_b")
+    assert success is True
+    live_data = json.loads(live_token.read_text())
+    assert live_data["token"]["access_token"] == "new_b_token"
+
+
+def test_switch_profile_auto_refreshes_native(tmp_path, sample_token_dict, monkeypatch):
+    from promux.storage import StorageEngine
+
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True, exist_ok=True)
+    live_token = gemini_home / "antigravity-oauth-token"
+    live_token.write_text(json.dumps(sample_token_dict))
+
+    storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
+    storage.save_profile("profile_a")
+
+    token_b = dict(sample_token_dict)
+    token_b["token"] = {
+        "access_token": "expired_b",
+        "refresh_token": "ref_b",
+        "expiry": "2020-01-01T00:00:00Z",
+    }
+    live_token.write_text(json.dumps(token_b))
+    storage.save_profile("profile_b")
+    storage.switch_profile("profile_a")
+
+    class MockResp:
+        def read(self):
+            return json.dumps({
+                "access_token": "native_refreshed_b",
+                "expires_in": 3600,
+            }).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=10: MockResp())
+
+    success = storage.switch_profile("profile_b")
+    assert success is True
+    live_data = json.loads(live_token.read_text())
+    assert live_data["token"]["access_token"] == "native_refreshed_b"
+    vault_b = promux_home / "accounts" / "profile_b" / "antigravity-oauth-token"
+    vault_data = json.loads(vault_b.read_text())
+    assert vault_data["token"]["access_token"] == "native_refreshed_b"
+
+
+def test_switch_profile_refresh_failure_still_switches(tmp_path, sample_token_dict, monkeypatch):
+    from promux.storage import StorageEngine
+
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True, exist_ok=True)
+    live_token = gemini_home / "antigravity-oauth-token"
+    live_token.write_text(json.dumps(sample_token_dict))
+
+    storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
+    storage.save_profile("profile_a")
+
+    token_b = dict(sample_token_dict)
+    token_b["token"] = {
+        "access_token": "expired_b",
+        "refresh_token": "ref_b",
+        "expiry": "2020-01-01T00:00:00Z",
+    }
+    live_token.write_text(json.dumps(token_b))
+    storage.save_profile("profile_b")
+    storage.switch_profile("profile_a")
+
+    # Refresh returns None (failure)
+    monkeypatch.setattr("promux.cli._get_or_refresh_access_token", lambda p, storage=None: None)
+
+    success = storage.switch_profile("profile_b")
+    assert success is True
+    live_data = json.loads(live_token.read_text())
+    assert live_data["token"]["access_token"] == "expired_b"
+    assert storage.get_active_profile() == "profile_b"
+
+
+def test_switch_profile_fallback_agy_renewal(tmp_path, sample_token_dict, monkeypatch):
+    import subprocess
+    from promux.storage import StorageEngine
+
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir(parents=True, exist_ok=True)
+    live_token = gemini_home / "antigravity-oauth-token"
+    live_token.write_text(json.dumps(sample_token_dict))
+
+    storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
+    storage.save_profile("profile_a")
+
+    token_b = dict(sample_token_dict)
+    token_b["token"] = {
+        "access_token": "expired_b",
+        "refresh_token": "ref_b",
+        "expiry": "2020-01-01T00:00:00Z",
+    }
+    live_token.write_text(json.dumps(token_b))
+    storage.save_profile("profile_b")
+    storage.switch_profile("profile_a")
+
+    # Tier 1 fails
+    monkeypatch.setattr("promux.cli._refresh_token_native", lambda p, td: None)
+    monkeypatch.setattr("shutil.which", lambda cmd: "/mock/bin/agy" if cmd == "agy" else None)
+
+    def mock_run(cmd, capture_output=True, timeout=10, check=False):
+        live_token.write_text(json.dumps({
+            "token": {
+                "access_token": "agy_refreshed_b",
+                "refresh_token": "ref_b",
+                "expiry": "2030-01-01T00:00:00Z",
+            }
+        }))
+        return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    success = storage.switch_profile("profile_b")
+    assert success is True
+    live_data = json.loads(live_token.read_text())
+    assert live_data["token"]["access_token"] == "agy_refreshed_b"
+
+

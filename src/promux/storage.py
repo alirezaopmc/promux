@@ -142,6 +142,26 @@ class StorageEngine:
                         tmp_prev.chmod(0o600)
                         os.replace(tmp_prev, prev_vault_token)
 
+            # Auto-refresh src_token if expired before hot-swapping into live_token
+            try:
+                from .cli import _get_or_refresh_access_token
+
+                refreshed_token = _get_or_refresh_access_token(src_token, storage=self)
+                if refreshed_token:
+                    try:
+                        src_data = json.loads(src_token.read_text(encoding="utf-8"))
+                        if src_data.get("token", {}).get("access_token") != refreshed_token:
+                            src_data.setdefault("token", {})["access_token"] = refreshed_token
+                            tmp_src = src_token.with_suffix(".tmp")
+                            with open(tmp_src, "w", encoding="utf-8") as f:
+                                json.dump(src_data, f, indent=2)
+                            tmp_src.chmod(0o600)
+                            os.replace(tmp_src, src_token)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
             # I2: Atomic Hot-Swapping of live_token
             self.live_token.parent.mkdir(parents=True, exist_ok=True)
             tmp_token = self.live_token.with_suffix(".tmp")

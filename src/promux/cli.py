@@ -6,6 +6,7 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -189,7 +190,12 @@ def _refresh_token_fallback_agy(token_path: Path, storage: StorageEngine) -> str
         return None
 
     try:
-        with file_lock(storage.lock_file):
+        lock_ctx = (
+            nullcontext()
+            if getattr(storage, "_tx_state", None) is not None
+            else file_lock(storage.lock_file)
+        )
+        with lock_ctx:
             old_data = _read_token_data(token_path)
             old_acc = _extract_access_token(old_data)
             old_exp = _extract_expiry(old_data)
