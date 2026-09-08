@@ -304,6 +304,7 @@ def test_cli_quota_success(tmp_path, sample_token_dict, monkeypatch, capsys):
     assert "GEMINI" in out or "Gemini" in out
     assert "CLAUDE" in out or "Claude" in out or "third" in out.lower()
     assert "85" in out
+    assert "NEXT RESET" not in out
 
     # JSON mode
     rc = main(["quota", "demo", "--json"])
@@ -313,6 +314,7 @@ def test_cli_quota_success(tmp_path, sample_token_dict, monkeypatch, capsys):
     assert res["account"] == "demo"
     assert res["gemini"]["5h_remaining"] == 0.85
     assert res["third_party"]["5h_remaining"] == 0.25
+    assert "5h_reset_relative" in res["gemini"]
 
 
 def test_cli_quota_error_handling(tmp_path, sample_token_dict, monkeypatch, capsys):
@@ -793,6 +795,7 @@ def test_cli_quota_single_profile_detail(tmp_path, sample_token_dict, monkeypatc
     assert "Quota for account 'acc1'" in out
     assert "MODEL GROUP" in out
     assert "Gemini Models" in out
+    assert "REMAINING & RESET" in out
 
 
 def test_cli_quota_all_profiles_with_isolated_error(
@@ -1839,3 +1842,73 @@ def test_quota_multi_profile_does_not_leak_revoked_state(tmp_path, sample_token_
     r2 = next(r for r in res if r["account"] == "acct2")
     assert "error" not in r2
     assert r2["gemini"]["5h_remaining"] == 0.99
+
+
+def test_cmd_quota_redesigned_display(storage_with_profiles, monkeypatch, capsys):
+    from promux.cli import cmd_quota
+    from promux.models import QuotaSummary
+
+    mock_qs = QuotaSummary(
+        gemini_5h_remaining=0.98,
+        gemini_weekly_remaining=0.85,
+        third_party_5h_remaining=1.0,
+        third_party_weekly_remaining=0.925,
+        gemini_5h_reset="2099-01-01T14:15:00Z",
+        gemini_weekly_reset="2099-01-05T16:00:00Z",
+        third_party_5h_reset="2099-01-01T15:00:00Z",
+        third_party_weekly_reset="2099-01-06T18:00:00Z",
+    )
+
+    def mock_fetch(storage, name):
+        return mock_qs, "test-proj", None
+
+    monkeypatch.setattr("promux.cli._fetch_account_quota", mock_fetch)
+
+    # Overview mode
+    ret = cmd_quota(storage_with_profiles, name=None, json_out=False)
+    assert ret == 0
+    captured = capsys.readouterr().out
+
+    # Verify column headers: NEXT RESET is gone, cells contain reset countdowns
+    assert "NEXT RESET" not in captured
+    assert "GEMINI (5H)" in captured
+    assert "GEMINI (WK)" in captured
+    assert "CLAUDE (5H)" in captured
+    assert "CLAUDE (WK)" in captured
+    assert "98.0%" in captured
+    assert "85.0%" in captured
+    assert "(" in captured and ")" in captured
+
+    # Single profile detail mode
+    capsys.readouterr()  # clear buffer
+    ret_detail = cmd_quota(storage_with_profiles, name="work", json_out=False)
+    assert ret_detail == 0
+    detail_captured = capsys.readouterr().out
+    assert "REMAINING & RESET" in detail_captured
+    assert "98.0%" in detail_captured
+    assert "UTC" in detail_captured
+
+    # Overview JSON mode
+    capsys.readouterr()
+    ret_json = cmd_quota(storage_with_profiles, name=None, json_out=True)
+    assert ret_json == 0
+    json_captured = capsys.readouterr().out
+    overview_data = json.loads(json_captured)
+    assert len(overview_data) >= 1
+    rec = overview_data[0]
+    assert "5h_reset_relative" in rec["gemini"]
+    assert "weekly_reset_relative" in rec["gemini"]
+    assert "5h_reset_relative" in rec["third_party"]
+    assert "weekly_reset_relative" in rec["third_party"]
+
+    # Detail JSON mode
+    capsys.readouterr()
+    ret_detail_json = cmd_quota(storage_with_profiles, name="work", json_out=True)
+    assert ret_detail_json == 0
+    detail_json_captured = capsys.readouterr().out
+    detail_data = json.loads(detail_json_captured)
+    assert "5h_reset_relative" in detail_data["gemini"]
+    assert "weekly_reset_relative" in detail_data["gemini"]
+    assert "5h_reset_relative" in detail_data["third_party"]
+    assert "weekly_reset_relative" in detail_data["third_party"]
+

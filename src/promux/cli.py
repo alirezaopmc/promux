@@ -27,6 +27,11 @@ from .constants import (
     PROMUX_HOME,
 )
 from .failover import FailoverEngine
+from .formatters import (
+    format_quota_cell,
+    format_quota_detail,
+    format_relative_countdown,
+)
 from .models import AccountMeta, QuotaSummary
 from .quota import QuotaClient
 from .storage import StorageEngine
@@ -676,14 +681,18 @@ def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
                 "gemini": {
                     "5h_remaining": qs.gemini_5h_remaining,
                     "5h_reset": qs.gemini_5h_reset,
+                    "5h_reset_relative": format_relative_countdown(qs.gemini_5h_reset),
                     "weekly_remaining": qs.gemini_weekly_remaining,
                     "weekly_reset": qs.gemini_weekly_reset,
+                    "weekly_reset_relative": format_relative_countdown(qs.gemini_weekly_reset),
                 },
                 "third_party": {
                     "5h_remaining": qs.third_party_5h_remaining,
                     "5h_reset": qs.third_party_5h_reset,
+                    "5h_reset_relative": format_relative_countdown(qs.third_party_5h_reset),
                     "weekly_remaining": qs.third_party_weekly_remaining,
                     "weekly_reset": qs.third_party_weekly_reset,
+                    "weekly_reset_relative": format_relative_countdown(qs.third_party_weekly_reset),
                 },
             }
             print(json.dumps(res, indent=2))
@@ -691,24 +700,19 @@ def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
 
         active_tag = " [ACTIVE]" if name == active_profile else ""
         print(f"Quota for account '{name}' (project: {project_id}){active_tag}:\n")
-        header = f"{'MODEL GROUP':<24} {'WINDOW':<10} {'REMAINING':<12} {'RESET TIME'}"
+        header = f"{'MODEL GROUP':<24} {'WINDOW':<10} {'REMAINING & RESET'}"
         print(header)
-        print("-" * len(header))
+        print("-" * 80)
 
-        def _fmt(val: float | None) -> str:
-            return f"{val * 100:.1f}%" if val is not None else "-"
+        g_5h = format_quota_detail(qs.gemini_5h_remaining, qs.gemini_5h_reset)
+        g_wk = format_quota_detail(qs.gemini_weekly_remaining, qs.gemini_weekly_reset)
+        c_5h = format_quota_detail(qs.third_party_5h_remaining, qs.third_party_5h_reset)
+        c_wk = format_quota_detail(qs.third_party_weekly_remaining, qs.third_party_weekly_reset)
 
-        g_5h = _fmt(qs.gemini_5h_remaining)
-        g_wk = _fmt(qs.gemini_weekly_remaining)
-        c_5h = _fmt(qs.third_party_5h_remaining)
-        c_wk = _fmt(qs.third_party_weekly_remaining)
-
-        print(f"{'Gemini Models':<24} {'5h':<10} {g_5h:<12} {qs.gemini_5h_reset or '-'}")
-        print(f"{'Gemini Models':<24} {'weekly':<10} {g_wk:<12} {qs.gemini_weekly_reset or '-'}")
-        tp_5h_reset = qs.third_party_5h_reset or "-"
-        tp_wk_reset = qs.third_party_weekly_reset or "-"
-        print(f"{'Claude & GPT Models':<24} {'5h':<10} {c_5h:<12} {tp_5h_reset}")
-        print(f"{'Claude & GPT Models':<24} {'weekly':<10} {c_wk:<12} {tp_wk_reset}")
+        print(f"{'Gemini Models':<24} {'5h':<10} {g_5h}")
+        print(f"{'Gemini Models':<24} {'weekly':<10} {g_wk}")
+        print(f"{'Claude & GPT Models':<24} {'5h':<10} {c_5h}")
+        print(f"{'Claude & GPT Models':<24} {'weekly':<10} {c_wk}")
         return 0
 
     # Multi-profile overview mode
@@ -739,14 +743,18 @@ def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
                 record["gemini"] = {
                     "5h_remaining": qs.gemini_5h_remaining,
                     "5h_reset": qs.gemini_5h_reset,
+                    "5h_reset_relative": format_relative_countdown(qs.gemini_5h_reset),
                     "weekly_remaining": qs.gemini_weekly_remaining,
                     "weekly_reset": qs.gemini_weekly_reset,
+                    "weekly_reset_relative": format_relative_countdown(qs.gemini_weekly_reset),
                 }
                 record["third_party"] = {
                     "5h_remaining": qs.third_party_5h_remaining,
                     "5h_reset": qs.third_party_5h_reset,
+                    "5h_reset_relative": format_relative_countdown(qs.third_party_5h_reset),
                     "weekly_remaining": qs.third_party_weekly_remaining,
                     "weekly_reset": qs.third_party_weekly_reset,
+                    "weekly_reset_relative": format_relative_countdown(qs.third_party_weekly_reset),
                 }
             else:
                 record["error"] = err
@@ -754,51 +762,30 @@ def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
         else:
             active_mark = "*" if is_active else ""
             if qs:
-                g5 = (
-                    f"{qs.gemini_5h_remaining * 100:.1f}%"
-                    if qs.gemini_5h_remaining is not None
-                    else "-"
-                )
-                gw = (
-                    f"{qs.gemini_weekly_remaining * 100:.1f}%"
-                    if qs.gemini_weekly_remaining is not None
-                    else "-"
-                )
-                c5 = (
-                    f"{qs.third_party_5h_remaining * 100:.1f}%"
-                    if qs.third_party_5h_remaining is not None
-                    else "-"
-                )
-                cw = (
-                    f"{qs.third_party_weekly_remaining * 100:.1f}%"
-                    if qs.third_party_weekly_remaining is not None
-                    else "-"
-                )
-                reset_raw = qs.gemini_5h_reset or qs.third_party_5h_reset or "-"
-                reset_display = (
-                    reset_raw.split("T")[-1].replace("Z", "") if "T" in reset_raw else reset_raw
-                )
+                g5 = format_quota_cell(qs.gemini_5h_remaining, qs.gemini_5h_reset)
+                gw = format_quota_cell(qs.gemini_weekly_remaining, qs.gemini_weekly_reset)
+                c5 = format_quota_cell(qs.third_party_5h_remaining, qs.third_party_5h_reset)
+                cw = format_quota_cell(qs.third_party_weekly_remaining, qs.third_party_weekly_reset)
             else:
                 g5 = "[AUTH ERROR]" if "401" in str(err) else "[ERROR]"
                 gw = "-"
                 c5 = "-"
                 cw = "-"
-                reset_display = "-"
-            text_rows.append((active_mark, acct_name, g5, gw, c5, cw, reset_display))
+            text_rows.append((active_mark, acct_name, g5, gw, c5, cw))
 
     if json_out:
         print(json.dumps(json_records, indent=2))
         return 0
 
     header = (
-        f"{'ACTIVE':<7} {'PROFILE':<17} {'GEMINI (5H)':<13} {'GEMINI (WK)':<13} "
-        f"{'CLAUDE (5H)':<13} {'CLAUDE (WK)':<13} {'NEXT RESET (UTC)'}"
+        f"{'ACTIVE':<7} {'PROFILE':<17} {'GEMINI (5H)':<20} {'GEMINI (WK)':<20} "
+        f"{'CLAUDE (5H)':<20} {'CLAUDE (WK)':<20}"
     )
     print(header)
     print("-" * len(header))
-    for active_mark, acct_name, g5, gw, c5, cw, reset_display in text_rows:
+    for active_mark, acct_name, g5, gw, c5, cw in text_rows:
         print(
-            f"{active_mark:<7} {acct_name:<17} {g5:<13} {gw:<13} {c5:<13} {cw:<13} {reset_display}"
+            f"{active_mark:<7} {acct_name:<17} {g5:<20} {gw:<20} {c5:<20} {cw:<20}"
         )
 
     return 0
