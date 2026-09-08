@@ -4,6 +4,7 @@ import subprocess
 from promux.completion import (
     SUBCOMMANDS,
     SUPPORTED_SHELLS,
+    TOOLS,
     generate_bash_completion,
     generate_zsh_completion,
 )
@@ -27,8 +28,13 @@ def test_generate_bash_completion() -> None:
     assert "COMP_WORDS" in script
 
     # All subcommands included
+    assert "tools" in SUBCOMMANDS
     for cmd in SUBCOMMANDS:
         assert cmd in script
+
+    # All tools included as first-word options
+    for tool in TOOLS:
+        assert tool in script
 
     # Syntax check via bash -n if available
     bash_path = shutil.which("bash")
@@ -50,5 +56,10 @@ def test_generate_zsh_completion() -> None:
     assert "funcstack[1]" in script
 
     # All subcommands included
+    assert "tools" in SUBCOMMANDS
     for cmd in SUBCOMMANDS:
         assert cmd in script
+
+    # All tools included
+    for tool in TOOLS:
+        assert tool in script

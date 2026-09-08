@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .adapters import ToolRegistry, get_default_registry
 from .completion import (
     SUPPORTED_SHELLS,
     generate_bash_completion,
@@ -1039,6 +1040,50 @@ def cmd_watch(failover: FailoverEngine, poll_seconds: float, cooldown: int | Non
     return 0
 
 
+COMMAND_CAPABILITIES: dict[str, str] = {
+    "list": "vault",
+    "save": "vault",
+    "switch": "vault",
+    "next": "vault",
+    "whoami": "vault",
+    "remove": "vault",
+    "quota": "quota",
+    "refresh": "refresh",
+    "watch": "watch",
+}
+
+
+def cmd_tools(registry: ToolRegistry, json_out: bool = False) -> int:
+    if json_out:
+        out = []
+        for tool in registry.list_all():
+            storage = tool.get_storage()
+            out.append(
+                {
+                    "tool": tool.name,
+                    "name": tool.display_name,
+                    "active_profile": storage.get_active_profile(),
+                    "capabilities": tool.list_capabilities(),
+                    "default": tool.name == registry.default_tool().name,
+                }
+            )
+        print(json.dumps(out, indent=2))
+        return 0
+
+    print(f"{'TOOL':<10}{'NAME':<22}{'ACTIVE PROFILE':<16}{'CAPABILITIES'}")
+    print("-" * 73)
+    for tool in registry.list_all():
+        storage = tool.get_storage()
+        active = storage.get_active_profile() or "-"
+        caps = tool.list_capabilities()
+        if getattr(tool, "is_scaffolded", False):
+            caps_str = f"{', '.join(caps)} (scaffolded)"
+        else:
+            caps_str = ", ".join(caps)
+        print(f"{tool.name:<10}{tool.display_name:<22}{active:<16}{caps_str}")
+    return 0
+
+
 def cmd_completion(shell: str) -> int:
     if shell == "bash":
         print(generate_bash_completion(), end="")
@@ -1143,6 +1188,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Cooldown override in minutes (default: auto-detected from log hints)",
     )
 
+    # tools
+    tools_p = sub.add_parser(
+        "tools", parents=[common_parser], help="List supported developer CLI tools"
+    )
+    tools_p.add_argument(
+        "action",
+        nargs="?",
+        default="list",
+        choices=["list"],
+        help="Action (default: list)",
+    )
+
     # completion
     p_comp = sub.add_parser("completion", help="Generate shell auto-completion script")
     p_comp.add_argument("shell", choices=SUPPORTED_SHELLS, help="Target shell (bash or zsh)")
@@ -1155,17 +1212,54 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
+    registry = get_default_registry()
+    raw_args = list(argv)
+
+    # Detect tool-first invocation: promux <tool> <command> [args...]
+    # If the first non-option positional argument matches a registered tool name, route to that tool adapter.
+    target_tool = None
+    remaining_args = raw_args
+
+    first_pos_idx = None
+    for i, arg in enumerate(raw_args):
+        if not arg.startswith("-"):
+            first_pos_idx = i
+            break
+
+    if first_pos_idx is not None and registry.has_tool(raw_args[first_pos_idx]):
+        target_tool = registry.get(raw_args[first_pos_idx])
+        remaining_args = raw_args[:first_pos_idx] + raw_args[first_pos_idx + 1:]
+    else:
+        target_tool = registry.default_tool()
+
     parser = build_parser()
     try:
-        args = parser.parse_args(argv)
+        args = parser.parse_args(remaining_args)
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 2
 
-    storage = get_storage()
-    failover = FailoverEngine(storage)
     json_out = getattr(args, "json", False)
 
     try:
+        if args.command == "tools":
+            return cmd_tools(registry, json_out)
+
+        if args.command == "completion":
+            return cmd_completion(args.shell)
+
+        # Tool capability validation
+        if args.command in COMMAND_CAPABILITIES:
+            required_cap = COMMAND_CAPABILITIES[args.command]
+            caps = target_tool.list_capabilities()
+            if required_cap not in caps:
+                caps_str = ", ".join(caps)
+                raise RuntimeError(
+                    f"Tool '{target_tool.name}' does not support '{required_cap}'. Supported capabilities: {caps_str}"
+                )
+
+        storage = target_tool.get_storage()
+        failover = FailoverEngine(storage)
+
         if args.command == "list":
             return cmd_list(storage, json_out)
         elif args.command == "save":
@@ -1184,8 +1278,6 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_remove(storage, args.name, json_out)
         elif args.command == "watch":
             return cmd_watch(failover, args.poll_seconds, args.cooldown)
-        elif args.command == "completion":
-            return cmd_completion(args.shell)
         else:
             parser.print_help(file=sys.stderr)
             return 2

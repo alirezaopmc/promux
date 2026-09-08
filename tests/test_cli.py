@@ -1912,3 +1912,102 @@ def test_cmd_quota_redesigned_display(storage_with_profiles, monkeypatch, capsys
     assert "5h_reset_relative" in detail_data["third_party"]
     assert "weekly_reset_relative" in detail_data["third_party"]
 
+
+def test_tools_command(capsys):
+    ret = main(["tools"])
+    assert ret == 0
+    captured = capsys.readouterr().out
+    assert "TOOL" in captured
+    assert "NAME" in captured
+    assert "ACTIVE PROFILE" in captured
+    assert "CAPABILITIES" in captured
+    assert "agy" in captured
+    assert "Antigravity CLI" in captured
+    assert "claude" in captured
+    assert "Claude Code" in captured
+    assert "codex" in captured
+    assert "cursor" in captured
+    assert "vault, quota, watch, refresh" in captured
+    assert "vault (scaffolded)" in captured
+
+
+def test_tools_command_json(capsys):
+    ret = main(["tools", "--json"])
+    assert ret == 0
+    captured = capsys.readouterr().out
+    tools = json.loads(captured)
+    assert isinstance(tools, list)
+    assert len(tools) == 4
+    tool_map = {t["tool"]: t for t in tools}
+
+    assert tool_map["agy"]["name"] == "Antigravity CLI"
+    assert tool_map["agy"]["default"] is True
+    assert tool_map["agy"]["capabilities"] == ["vault", "quota", "watch", "refresh"]
+
+    assert tool_map["claude"]["name"] == "Claude Code"
+    assert tool_map["claude"]["default"] is False
+    assert tool_map["claude"]["capabilities"] == ["vault"]
+
+
+def test_tools_list_subcommand(capsys):
+    ret = main(["tools", "list"])
+    assert ret == 0
+    captured = capsys.readouterr().out
+    assert "agy" in captured
+
+
+def test_tool_first_dispatch(storage_with_profiles, monkeypatch, capsys):
+    monkeypatch.setenv("PROMUX_HOME", str(storage_with_profiles.home))
+    monkeypatch.setenv("PROMUX_GEMINI_HOME", str(storage_with_profiles.live_token.parent))
+
+    ret = main(["agy", "list"])
+    assert ret == 0
+    captured = capsys.readouterr().out
+    assert "work" in captured
+    assert "personal" in captured
+
+
+def test_top_level_fallback(storage_with_profiles, monkeypatch, capsys):
+    monkeypatch.setenv("PROMUX_HOME", str(storage_with_profiles.home))
+    monkeypatch.setenv("PROMUX_GEMINI_HOME", str(storage_with_profiles.live_token.parent))
+
+    ret = main(["list"])
+    assert ret == 0
+    captured = capsys.readouterr().out
+    assert "work" in captured
+    assert "personal" in captured
+
+
+def test_tool_capability_validation_text(capsys):
+    ret = main(["claude", "quota"])
+    assert ret == 1
+    err = capsys.readouterr().err
+    assert "Error: Tool 'claude' does not support 'quota'. Supported capabilities: vault" in err
+
+    ret = main(["codex", "watch"])
+    assert ret == 1
+    err = capsys.readouterr().err
+    assert "Error: Tool 'codex' does not support 'watch'. Supported capabilities: vault" in err
+
+    ret = main(["cursor", "refresh"])
+    assert ret == 1
+    err = capsys.readouterr().err
+    assert "Error: Tool 'cursor' does not support 'refresh'. Supported capabilities: vault" in err
+
+
+def test_tool_capability_validation_json(capsys):
+    ret = main(["claude", "quota", "--json"])
+    assert ret == 1
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["error"] == "Tool 'claude' does not support 'quota'. Supported capabilities: vault"
+
+
+def test_tool_first_dispatch_stub_vault(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("PROMUX_HOME", str(tmp_path))
+
+    ret = main(["claude", "list"])
+    assert ret == 0
+    captured = capsys.readouterr().out
+    assert "No accounts" in captured or "ACTIVE" in captured
+

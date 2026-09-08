@@ -12,6 +12,14 @@ SUBCOMMANDS: list[str] = [
     "remove",
     "watch",
     "completion",
+    "tools",
+]
+
+TOOLS: list[str] = [
+    "agy",
+    "claude",
+    "codex",
+    "cursor",
 ]
 
 
@@ -32,7 +40,8 @@ _promux_completion() {
         cword=$COMP_CWORD
     fi
 
-    local commands="list save switch next quota whoami remove watch completion"
+    local commands="list save switch next quota whoami remove watch completion tools"
+    local tools="agy claude codex cursor"
     local common_opts="--json --help -h"
 
     # Accounts helper
@@ -44,11 +53,26 @@ _promux_completion() {
     }
 
     if [[ $cword -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "$commands $common_opts" -- "$cur") )
+        COMPREPLY=( $(compgen -W "$commands $tools $common_opts" -- "$cur") )
         return 0
     fi
 
+    local cmd="${words[1]}"
+    local prev_word="$prev"
     case "${words[1]}" in
+        agy|claude|codex|cursor)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "$commands $common_opts" -- "$cur") )
+                return 0
+            fi
+            cmd="${words[2]}"
+            ;;
+        *)
+            cmd="${words[1]}"
+            ;;
+    esac
+
+    case "$cmd" in
         switch|remove|quota)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "$common_opts" -- "$cur") )
@@ -58,24 +82,28 @@ _promux_completion() {
             return 0
             ;;
         save)
-            if [[ "$prev" == "--email" ]]; then
+            if [[ "$prev_word" == "--email" ]]; then
                 return 0
             fi
             COMPREPLY=( $(compgen -W "--email $common_opts" -- "$cur") )
             return 0
             ;;
         next)
-            if [[ "$prev" == "--reason" || "$prev" == "--cooldown" ]]; then
+            if [[ "$prev_word" == "--reason" || "$prev_word" == "--cooldown" ]]; then
                 return 0
             fi
             COMPREPLY=( $(compgen -W "--reason --cooldown $common_opts" -- "$cur") )
             return 0
             ;;
         watch)
-            if [[ "$prev" == "--poll-seconds" || "$prev" == "--cooldown" ]]; then
+            if [[ "$prev_word" == "--poll-seconds" || "$prev_word" == "--cooldown" ]]; then
                 return 0
             fi
             COMPREPLY=( $(compgen -W "--poll-seconds --cooldown $common_opts" -- "$cur") )
+            return 0
+            ;;
+        tools)
+            COMPREPLY=( $(compgen -W "list $common_opts" -- "$cur") )
             return 0
             ;;
         completion)
@@ -121,6 +149,15 @@ _promux() {
         'remove:Remove an account from vault'
         'watch:Start reactive quota failover daemon'
         'completion:Generate shell completion script'
+        'tools:List supported developer CLI tools'
+    )
+
+    local -a tools
+    tools=(
+        'agy:Google Antigravity CLI'
+        'claude:Claude Code'
+        'codex:Codex CLI'
+        'cursor:Cursor CLI'
     )
 
     _arguments -C \
@@ -132,9 +169,45 @@ _promux() {
     case $state in
         command)
             _describe 'promux command' subcommands
+            _describe 'promux tool' tools
             ;;
         args)
             case $words[1] in
+                agy|claude|codex|cursor)
+                    if [[ $CURRENT -eq 2 ]]; then
+                        _describe 'promux command' subcommands
+                    else
+                        case $words[2] in
+                            switch|remove|quota)
+                                _arguments \
+                                    '--json[Output structured JSON]' \
+                                    '1:account:_promux_accounts'
+                                ;;
+                            save)
+                                _arguments \
+                                    '--email[Account email address]:email:_message "email address"' \
+                                    '--json[Output structured JSON]' \
+                                    '1:name:_message "account name"'
+                                ;;
+                            next)
+                                _arguments \
+                                    '--reason[Reason for rotation]:reason:_message "reason"' \
+                                    '--cooldown[Cooldown minutes]:cooldown:_message "minutes"' \
+                                    '--json[Output structured JSON]'
+                                ;;
+                            watch)
+                                _arguments \
+                                    '--poll-seconds[Log polling interval]:seconds:_message "seconds"' \
+                                    '--cooldown[Fallback cooldown minutes]:cooldown:_message "minutes"'
+                                ;;
+                            tools)
+                                _arguments \
+                                    '--json[Output structured JSON]' \
+                                    '1:action:(list)'
+                                ;;
+                        esac
+                    fi
+                    ;;
                 switch|remove|quota)
                     _arguments \
                         '--json[Output structured JSON]' \
@@ -156,6 +229,11 @@ _promux() {
                     _arguments \
                         '--poll-seconds[Log polling interval]:seconds:_message "seconds"' \
                         '--cooldown[Fallback cooldown minutes]:cooldown:_message "minutes"'
+                    ;;
+                tools)
+                    _arguments \
+                        '--json[Output structured JSON]' \
+                        '1:action:(list)'
                     ;;
                 completion)
                     _arguments \

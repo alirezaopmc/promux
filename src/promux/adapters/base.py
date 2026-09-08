@@ -11,6 +11,7 @@ class BaseToolAdapter(ABC):
 
     name: str
     display_name: str
+    is_scaffolded: bool = False
 
     @abstractmethod
     def get_storage(self, promux_home: Path | None = None) -> StorageEngine:
