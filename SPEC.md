@@ -1,23 +1,31 @@
-# Promux: Profile Multiplexer & Quota Failover Daemon
+# Promux: Multi-Tool Profile Multiplexer & Quota Failover Daemon
 ## Architecture, Philosophy & Technical Specification
 
 > **Package Name:** `promux`  
 > **Directory:** `~/Dev/promux`  
 > **Version:** 1.0.0  
-> **Date:** 2026-08-31  
+> **Date:** 2026-09-08  
 > **Author:** Alireza Opmc  
 
 ---
 
 ## 1. Executive Summary & Problem Space
 
-The **Antigravity CLI (`agy`)** stores its active OAuth session token exclusively in a single filesystem path (`~/.gemini/antigravity-cli/antigravity-oauth-token`). It provides no native multi-account vault, no profile switching command, and no automated failover mechanism when an account hits quota exhaustion (`429 RESOURCE_EXHAUSTED` / `Individual quota reached`).
+Modern AI-assisted development utilizes multiple command-line developer tools:
+- **Google Antigravity CLI (`agy`)**
+- **Anthropic Claude Code (`claude`)**
+- **OpenAI Codex CLI (`codex`)**
+- **Cursor CLI (`cursor`)**
 
-**`promux`** is an external, non-intrusive profile multiplexer and automated failover daemon designed to manage multiple Antigravity accounts seamlessly. It provides:
-1. **Isolated Account Vaulting**: Multi-profile storage and zero-downtime hot swapping.
-2. **Proactive Quota Inspection**: Direct REST client querying Google Cloud Code Assist backend APIs to inspect remaining quota fractions and reset countdowns.
-3. **Reactive Log-Tailing Failover**: Background daemon that streams `cli.log` to instantly detect quota limits and rotate to healthy standby accounts.
-4. **Resilient Concurrency & Anti-Thrashing**: POSIX file locks (`flock`), atomic state writes, and cooldown timers to prevent cascading rotations.
+Each tool typically persists its active session credentials to a fixed, isolated filesystem location with no built-in mechanism for multiple profile management, zero-downtime hot-swapping, quota monitoring, or automated failover upon rate limits (`429 RESOURCE_EXHAUSTED` / `quota reached`).
+
+**`promux`** is an extensible, non-intrusive profile multiplexer and developer utility designed to manage multiple accounts across any developer CLI tool. It provides:
+1. **Multi-Tool Architecture**: Extensible adapter framework supporting `agy`, `claude`, `codex`, `cursor`, and future CLI tools.
+2. **Tool-First CLI Grammar**: Unified command syntax (`promux <tool> <command>`) with 100% transparent top-level backward compatibility for default Antigravity usage (`promux <command>`).
+3. **Isolated Account Vaulting**: Multi-profile storage and atomic credential swapping under POSIX file locks.
+4. **Proactive Quota Inspection**: Live Cloud Code Assist quota monitoring with compact inline reset countdowns (`98.0% (2h 15m)`) for both 5-hour and weekly quota windows.
+5. **Reactive Log-Tailing Failover**: Background daemon tailing logs in real-time to detect quota walls and rotate to healthy standby accounts.
+6. **Resilient Concurrency & Anti-Thrashing**: POSIX file locks (`flock`), atomic `.tmp` state replacement, and cooldown timers to prevent cascading rotations.
 
 ---
 
@@ -25,258 +33,290 @@ The **Antigravity CLI (`agy`)** stores its active OAuth session token exclusivel
 
 ```mermaid
 flowchart TD
-    subgraph AntigravityCLI["Antigravity CLI (agy) Runtime"]
-        LiveToken["~/.gemini/antigravity-cli/antigravity-oauth-token"]
-        LiveLogs["~/.gemini/antigravity-cli/cli.log"]
+    subgraph ClientInvocation["Developer Invocations"]
+        ToolFirst["promux <tool> <command> (e.g. promux agy quota)"]
+        TopLevel["promux <command> (defaults to agy)"]
+        ToolsCmd["promux tools [list]"]
+    end
+
+    subgraph PromuxDispatcher["Promux CLI Dispatcher"]
+        Registry["ToolRegistry"]
+        AgyAdapter["AgyAdapter (default)"]
+        ClaudeAdapter["ClaudeAdapter"]
+        CodexAdapter["CodexAdapter"]
+        CursorAdapter["CursorAdapter"]
     end
 
     subgraph PromuxStorage["Promux Vault (~/.promux)"]
-        StateJSON["state.json (Active Profile, Cooldown Timers, Metadata)"]
-        LockFile["manager.lock (POSIX fcntl.flock Mutex)"]
-        Acc1["accounts/work/antigravity-oauth-token"]
-        Acc2["accounts/personal/antigravity-oauth-token"]
+        AgyVault["~/.promux/ (accounts, state.json, manager.lock)"]
+        ToolVaults["~/.promux/tools/<tool_name>/ (scoped per tool)"]
     end
 
-    subgraph PromuxCore["Promux Core Engines"]
-        ReactiveWatcher["Reactive Log Watcher (Regex stream on cli.log)"]
-        ProactiveQuota["Proactive Quota Client (Cloud Code Assist API)"]
-        FailoverEngine["Failover & Cooldown Coordinator"]
-        StorageEngine["Storage & Hot-Swap Engine"]
+    subgraph TargetRuntimes["Target CLI Runtimes"]
+        AgyRuntime["~/.gemini/antigravity-cli/ (live token & logs)"]
+        ClaudeRuntime["~/.claude/"]
+        CodexRuntime["~/.codex/"]
+        CursorRuntime["~/.cursor/"]
     end
 
-    LiveLogs -->|Regex Match: 429 / Quota Reached| ReactiveWatcher
-    ReactiveWatcher -->|Trigger Rotation| FailoverEngine
-    ProactiveQuota -->|Inspect Remaining %| FailoverEngine
-    FailoverEngine -->|Select Best Candidate| StorageEngine
-    StorageEngine -->|Atomic Swap under Mutex| LiveToken
-    StorageEngine <--> StateJSON
-    StorageEngine -.-> LockFile
-    Acc1 -.-> StorageEngine
-    Acc2 -.-> StorageEngine
+    ClientInvocation --> Registry
+    Registry --> AgyAdapter
+    Registry --> ClaudeAdapter
+    Registry --> CodexAdapter
+    Registry --> CursorAdapter
+
+    AgyAdapter --> AgyVault
+    ClaudeAdapter --> ToolVaults
+    CodexAdapter --> ToolVaults
+    CursorAdapter --> ToolVaults
+
+    AgyVault --> AgyRuntime
 ```
 
 ### 2.1 The Zero-Intrusion Overlay Philosophy
-`promux` never modifies or patches the `agy` binary, nor does it intercept network traffic via a proxy. Instead, it treats the local filesystem (`~/.gemini/`) as a mutable runtime interface. `agy` remains completely unaware of `promux`.
+`promux` never modifies or patches upstream CLI binaries, nor does it intercept network traffic via local HTTP proxies. Instead, it treats the local filesystem as a mutable runtime interface. Upstream developer CLIs remain completely unaware of `promux`.
 
 ### 2.2 Strict Single-Active Model
-Rather than multiplexing requests across accounts in parallel (which risks telemetry flags, token collisions, or concurrent prompt state issues), `promux` enforces **one active profile** while all other accounts remain in **STANDBY**, **COOLDOWN**, or **DISABLED** states.
+Rather than multiplexing requests across accounts in parallel (which risks telemetry flags, token collisions, or concurrent prompt state issues), `promux` enforces **one active profile per tool** while all other accounts remain in **STANDBY**, **COOLDOWN**, or **DISABLED** states.
 
-### 2.3 Dual-Loop Quota Awareness
-- **Proactive Loop**: Queries Google's internal Cloud Code Assist REST API using the stored OAuth token to evaluate account health (short-window % remaining, weekly % remaining, prompt credits).
-- **Reactive Loop**: Tails live log files (`cli.log`, `log/*.log`). If a generation in `agy` hits an unexpected quota wall, the watcher detects the error immediately and triggers hot failover.
+### 2.3 Dual-Loop Quota Awareness (Antigravity)
+- **Proactive Loop**: Queries Google's internal Cloud Code Assist REST API using the stored OAuth token to evaluate account health across 5-hour and weekly windows.
+- **Reactive Loop**: Tails live log files (`cli.log`, `log/*.log`). If an execution hits an unexpected quota wall, the watcher detects the error immediately and triggers hot failover.
 
 ### 2.4 Anti-Thrashing & Resilient Concurrency
 - **Cooldown Timers**: When an account encounters quota exhaustion, it is assigned a cooldown period (default: 60 minutes or parsed reset duration) to prevent circular rotation loops.
-- **Process Mutex**: File locking (`fcntl.flock` on Linux/macOS, `msvcrt.locking` on Windows) guards all state transitions, preventing corruption if multiple CLI calls, scripts, or daemons run concurrently.
-- **Atomic File Swaps**: Metadata state (`state.json`) is written to `.tmp` files and committed via POSIX atomic rename (`os.replace`).
+- **Process Mutex**: File locking (`fcntl.flock` on POSIX systems) guards all state transitions, preventing corruption if multiple CLI calls, scripts, or daemons run concurrently.
+- **Atomic File Swaps**: Metadata state (`state.json`) and live tokens are written to `.tmp` files and committed via POSIX atomic rename (`os.replace`).
 
 ### 2.5 Zero External Dependencies
-`promux` is built entirely on the Python 3.10+ Standard Library (`urllib`, `json`, `fcntl`, `subprocess`, `argparse`, `dataclasses`, `re`, `shutil`, `pathlib`). It requires no third-party package installations, eliminating virtual environment bloat and dependency drift.
+`promux` is built entirely on the Python 3.10+ Standard Library (`urllib`, `json`, `fcntl`, `argparse`, `dataclasses`, `datetime`, `re`, `shutil`, `pathlib`). It requires zero third-party package dependencies at runtime.
 
 ---
 
-## 3. Filesystem Layout & Storage Contracts
+## 3. Multi-Tool Adapter Architecture
 
-### 3.1 Directory Structure
-```text
-~/.promux/
-├── accounts/
-│   ├── <account-name-1>/
-│   │   └── antigravity-oauth-token     # Isolated profile token snapshot
-│   └── <account-name-2>/
-│       └── antigravity-oauth-token
-├── state.json                          # Central registry & runtime status
-└── manager.lock                        # Concurrency mutex
+### 3.1 Class Hierarchy
+```mermaid
+classDiagram
+    class BaseToolAdapter {
+        <<abstract>>
+        +str name
+        +str display_name
+        +bool is_scaffolded
+        +get_storage(promux_home: Path) StorageEngine
+        +bool supports_quota
+        +fetch_quota(storage, account_name) tuple
+        +bool supports_watch
+        +create_watcher(storage) Any
+        +bool supports_refresh
+        +refresh_account(storage, account_name, force) tuple
+        +list_capabilities() list[str]
+    }
+
+    class AgyAdapter {
+        +str name = "agy"
+        +str display_name = "Antigravity CLI"
+        +Path gemini_home
+        +bool supports_quota = True
+        +bool supports_watch = True
+        +bool supports_refresh = True
+    }
+
+    class ClaudeAdapter {
+        +str name = "claude"
+        +str display_name = "Claude Code"
+        +bool is_scaffolded = True
+    }
+
+    class CodexAdapter {
+        +str name = "codex"
+        +str display_name = "Codex CLI"
+        +bool is_scaffolded = True
+    }
+
+    class CursorAdapter {
+        +str name = "cursor"
+        +str display_name = "Cursor CLI"
+        +bool is_scaffolded = True
+    }
+
+    class ToolRegistry {
+        +register(adapter, default)
+        +get(name) BaseToolAdapter
+        +default_tool() BaseToolAdapter
+        +list_all() list[BaseToolAdapter]
+        +list_names() list[str]
+    }
+
+    BaseToolAdapter <|-- AgyAdapter
+    BaseToolAdapter <|-- ClaudeAdapter
+    BaseToolAdapter <|-- CodexAdapter
+    BaseToolAdapter <|-- CursorAdapter
+    ToolRegistry o-- BaseToolAdapter
 ```
 
-### 3.2 `state.json` Schema
+### 3.2 Capability Mapping & Validation
+Commands map to capabilities:
+- `quota`: requires `quota`
+- `watch`: requires `watch`
+- `refresh`: requires `refresh`
+- `list`, `save`, `switch`, `next`, `whoami`, `remove`: require `vault`
+
+If a user invokes an unsupported capability on a tool (e.g. `promux claude quota`), `promux` returns exit code 1 with:
+```text
+Error: Tool 'claude' does not support 'quota'. Supported capabilities: vault
+```
+
+---
+
+## 4. Filesystem Layout & Storage Contracts
+
+### 4.1 Directory Structure
+```text
+~/.promux/
+├── accounts/                           # Antigravity accounts (backward-compatible)
+│   ├── <account-1>/
+│   │   └── antigravity-oauth-token
+│   └── <account-2>/
+│       └── antigravity-oauth-token
+├── state.json                          # Central registry & runtime status (agy)
+├── manager.lock                        # Concurrency mutex (agy)
+└── tools/                              # Scoped storage for other CLI tools
+    ├── claude/
+    │   ├── accounts/
+    │   ├── state.json
+    │   └── manager.lock
+    ├── codex/
+    │   ├── accounts/
+    │   ├── state.json
+    │   └── manager.lock
+    └── cursor/
+        ├── accounts/
+        ├── state.json
+        └── manager.lock
+```
+
+---
+
+## 5. Quota Display & Countdown Redesign
+
+### 5.1 Overview Table Specification
+Reset times are embedded directly into each quota cell following the remaining percentage, eliminating the obsolete `NEXT RESET (UTC)` column:
+
+```text
+ACTIVE  PROFILE           GEMINI (5H)          GEMINI (WK)          CLAUDE (5H)          CLAUDE (WK)         
+---------------------------------------------------------------------------------------------------------
+*       work              98.0% (2h 15m)       85.0% (3d 4h)        100.0% (-)           92.5% (4d 1h)       
+        personal          45.2% (35m)          62.0% (1d 8h)        80.0% (1h 10m)       75.0% (2d 6h)       
+```
+
+- If time remaining exceeds 1 day: formatted as `{days}d {hours}h` (e.g. `3d 4h`).
+- If time remaining is under 24 hours: formatted as `{hours}h {minutes}m` (e.g. `2h 15m`).
+- If time remaining is under 1 hour: formatted as `{minutes}m` (e.g. `35m`).
+- If timestamp is missing or empty: formatted as `-` (e.g. `100.0% (-)`).
+
+### 5.2 Single-Profile Detail Mode
+```text
+Quota for account 'work' (project: aicode-consumers) [ACTIVE]:
+
+MODEL GROUP              WINDOW     REMAINING & RESET
+--------------------------------------------------------------------------------
+Gemini Models            5h         98.0% (2h 15m left - 14:15 UTC)
+Gemini Models            weekly     85.0% (3d 4h left - Sep 12 16:00 UTC)
+Claude & GPT Models      5h         100.0% (-)
+Claude & GPT Models      weekly     92.5% (4d 1h left - Sep 13 18:00 UTC)
+```
+
+### 5.3 JSON Schema Extension
+Quota JSON objects include both raw ISO timestamps and human-readable relative countdown strings:
 ```json
 {
-  "active": "work-account",
-  "accounts": {
-    "work-account": {
-      "name": "work-account",
-      "enabled": true,
-      "cooldown_until": null,
-      "saved_at": "2026-08-31T20:00:00+00:00",
-      "last_used_at": "2026-08-31T21:00:00+00:00",
-      "email": "developer@work.com",
-      "project_id": "projects/work-project-123",
-      "plan_type": "STANDARD"
-    },
-    "personal-account": {
-      "name": "personal-account",
-      "enabled": true,
-      "cooldown_until": "2026-08-31T22:00:00+00:00",
-      "saved_at": "2026-08-31T19:30:00+00:00",
-      "last_used_at": "2026-08-31T20:45:00+00:00",
-      "email": "me@personal.org",
-      "project_id": "projects/personal-project-456",
-      "plan_type": "STANDARD"
-    }
+  "account": "work",
+  "gemini": {
+    "5h_remaining": 0.98,
+    "5h_reset": "2026-09-09T14:15:00Z",
+    "5h_reset_relative": "2h 15m",
+    "weekly_remaining": 0.85,
+    "weekly_reset": "2026-09-12T16:00:00Z",
+    "weekly_reset_relative": "3d 4h"
   }
 }
 ```
-
-### 3.3 Account Lifecycle State Machine
-```mermaid
-stateDiagram-v2
-    [*] --> STANDBY: promux save <name>
-    STANDBY --> ACTIVE: promux switch / rotate_next
-    ACTIVE --> COOLDOWN: 429 / Quota Exhausted
-    ACTIVE --> STANDBY: Another account activated
-    COOLDOWN --> STANDBY: cooldown_until elapsed
-    STANDBY --> DISABLED: Disabled by user
-    DISABLED --> STANDBY: Enabled by user
-```
-
----
-
-## 4. Google Cloud Code Assist API Integration
-
-`promux` interfaces with Google's Cloud Code Assist backend to inspect quota allocations.
-
-### 4.1 Endpoints
-- **Base URL:** `https://cloudcode-pa.googleapis.com`
-- **User-Agent:** `antigravity`
-- **Headers:** `Authorization: Bearer <access_token>`, `Content-Type: application/json`
-
-### 4.2 Step 1: Load Cloud Code Metadata & Resolve Project ID
-- **Endpoint:** `POST /v1internal:loadCodeAssist`
-- **Request Payload:**
-  ```json
-  {
-    "metadata": {
-      "ideType": "ANTIGRAVITY",
-      "platform": "PLATFORM_UNSPECIFIED",
-      "pluginType": "GEMINI"
-    }
-  }
-  ```
-- **Response Extraction:**
-  - `cloudaicompanionProject`: Can be a string (`"projects/123456"`) or an object (`{"id": "projects/123456"}`).
-  - `planInfo.planType`: e.g. `"STANDARD"` or `"ENTERPRISE"`.
-  - `planInfo.monthlyPromptCredits`: Monthly allocated prompt credits.
-  - `availablePromptCredits`: Current available credits.
-
-### 4.3 Step 2: Retrieve Quota Summary
-- **Endpoint:** `POST /v1internal:retrieveUserQuotaSummary`
-- **Request Payload:**
-  ```json
-  {
-    "project": "<cloudaicompanionProject>"
-  }
-  ```
-- **Response Structure & Bucket Parsing:**
-  ```json
-  {
-    "groups": [
-      {
-        "name": "short_window",
-        "buckets": [
-          {
-            "name": "model_requests",
-            "remainingFraction": 0.85,
-            "resetTime": "2026-08-31T22:00:00Z"
-          }
-        ]
-      }
-    ]
-  }
-  ```
-
----
-
-## 5. Reactive Log Watcher Specification
-
-The watcher daemon tails `~/.gemini/antigravity-cli/cli.log` and `~/.gemini/antigravity-cli/log/*.log`.
-
-### 5.1 Regex Signatures
-| Pattern Name | Regular Expression | Description |
-| :--- | :--- | :--- |
-| `INDIVIDUAL_QUOTA` | `(?i)Individual quota reached` | Per-user model quota exhausted |
-| `RESOURCE_EXHAUSTED`| `(?i)RESOURCE_EXHAUSTED\s*\(\s*code\s*429\s*\)\|RESOURCE_EXHAUSTED` | Standard 429 quota error |
-| `WEEKLY_QUOTA` | `(?i)weekly quota reached` | Extended weekly window exhaustion |
-| `RESET_HINT` | `(?i)Resets in\s+(?P<reset>~?[^.)]+)` | Extracts human-readable reset duration |
-
-### 5.2 Stream Processing Algorithm
-1. Open log file and seek to `EOF` at startup (avoids replaying historical errors).
-2. Store byte offsets per file path.
-3. Poll at configured interval (default: `1.0s`).
-4. If file size drops below last known offset, handle log rotation (`offset = 0`).
-5. Read new lines; if any line matches quota patterns, trigger immediate failover.
 
 ---
 
 ## 6. Command Line Interface (CLI) Contract
 
-```text
-promux [global-flags] <subcommand> [args]
-```
+### 6.1 Invocation Modes
+1. **Tool-First Mode:**
+   ```bash
+   promux <tool> <command> [args...]
+   ```
+   Examples: `promux agy list`, `promux claude switch personal`, `promux agy quota`
+2. **Backward-Compatible Default Mode:**
+   ```bash
+   promux <command> [args...]
+   ```
+   When the first argument is a command name (`list`, `save`, `switch`, `next`, `quota`, `refresh`, `whoami`, `remove`, `watch`, `completion`), it automatically defaults to `agy`.
+3. **Tool Inspection:**
+   ```bash
+   promux tools [list] [--json]
+   ```
 
-### 6.1 Subcommand Matrix
-
-| Command | Arguments | Flags | Output / Behavior |
-| :--- | :--- | :--- | :--- |
-| `list` | None | `--json` | ASCII table or JSON view of all accounts, status, cooldowns |
-| `save` | `<name>` | None | Saves current live token as named profile; resolves email |
-| `switch` | `<name>` | None | Hot-swaps specified account into live `.gemini` path |
-| `next` | None | `--reason`, `--cooldown`, `--json` | Rotates to next eligible standby account |
-| `quota` | `[name]` | `--json` | Queries Cloud Code API and displays remaining % & resets |
-| `whoami` | None | `--json` | Shows email, account name, token path, and expiration |
-| `remove` | `<name>` | None | Removes account from vault and state registry |
-| `watch` | None | `--poll-seconds`, `--cooldown` | Starts foreground daemon tailing logs for 429 failover |
+### 6.2 Subcommand Matrix
+| Command | Arguments | Flags | Capabilities Required | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `tools` | `[list]` | `--json` | None | List registered CLI tools and capabilities |
+| `list` | None | `--json` | `vault` | List all accounts in the vault for the selected tool |
+| `save` | `<name>` | `--email` | `vault` | Save active credentials into the vault |
+| `switch`| `<name>` | None | `vault` | Hot-swap active profile credentials |
+| `next` | None | `--reason`, `--cooldown`, `--json` | `vault` | Rotate to next eligible standby account |
+| `quota` | `[name]` | `--json` | `quota` | Inspect live quota and reset countdowns |
+| `refresh`| `[name]` | `--force`, `--json` | `refresh` | Refresh OAuth access tokens |
+| `whoami`| None | `--json` | `vault` | Display active profile details |
+| `remove`| `<name>` | None | `vault` | Remove an account from the vault |
+| `watch` | None | `--poll-seconds`, `--cooldown` | `watch` | Start log tailing failover daemon |
+| `completion` | `<shell>`| None | None | Generate bash/zsh autocomplete script |
 
 ---
 
 ## 7. Package Blueprint & Modular Structure
 
-When implementing `promux`, the codebase should be organized into single-responsibility modules:
-
 ```text
 ~/Dev/promux/
-├── SPEC.md                     # This full architectural specification
 ├── pyproject.toml              # PEP 517/621 packaging metadata & CLI entrypoint
 ├── LICENSE                     # MIT License
-├── README.md                   # Documentation, badges, quickstart
-├── .gitignore
-├── .github/workflows/
-│   ├── test.yml                # CI: pytest on Python 3.10 - 3.13
-│   └── publish.yml             # CD: PyPI Trusted Publishing on GitHub Release
+├── README.md                   # Documentation & guide
+├── SPEC.md                     # This architectural specification
 ├── src/
 │   └── promux/
-│       ├── __init__.py         # Version (__version__ = "0.1.0") and public API
+│       ├── __init__.py         # Package version and root exports
+│       ├── adapters/           # Multi-tool adapter framework
+│       │   ├── __init__.py     # get_default_registry factory and exports
+│       │   ├── base.py         # BaseToolAdapter abstract base class
+│       │   ├── agy.py          # AgyAdapter (Antigravity CLI)
+│       │   ├── stubs.py        # ClaudeAdapter, CodexAdapter, CursorAdapter
+│       │   └── registry.py     # ToolRegistry implementation
 │       ├── constants.py        # Default paths, endpoints, regexes, timeouts
-│       ├── models.py           # Dataclasses (AccountMeta, QuotaSummary, RotationResult)
-│       ├── lock.py             # fcntl/msvcrt cross-platform file locking
+│       ├── models.py           # Dataclasses (AccountMeta, QuotaSummary, etc.)
+│       ├── formatters.py       # ISO timestamp parsing & relative countdown formatting
+│       ├── lock.py             # POSIX file locking (fcntl)
 │       ├── storage.py          # State persistence, atomic JSON writes, profile copy
 │       ├── quota.py            # Google Cloud Code Assist REST API client
 │       ├── failover.py         # Candidate selection & cooldown rotation coordinator
 │       ├── watch.py            # Reactive log watcher stream processor
-│       └── cli.py              # Argparse interface with table & JSON formatters
+│       ├── completion.py       # Shell auto-completion generators (bash/zsh)
+│       └── cli.py              # Tool-first CLI dispatcher and command handlers
 └── tests/
-    ├── conftest.py             # Mock fixtures for temporary homes and tokens
-    ├── test_lock.py            # Concurrency mutex tests
-    ├── test_storage.py         # State persistence & profile swapping tests
-    ├── test_quota.py           # Cloud Code API parsing tests (mocked HTTP)
-    ├── test_failover.py        # Active-standby rotation & cooldown tests
-    ├── test_watch.py           # Log pattern matching & stream tailing tests
-    └── test_cli.py             # End-to-end CLI execution tests
+    ├── conftest.py             # Shared fixtures and sandbox environments
+    ├── test_adapters.py        # Adapter hierarchy and registry tests
+    ├── test_cli.py             # CLI dispatch, routing, and command tests
+    ├── test_completion.py      # Shell completion syntax and keyword tests
+    ├── test_failover.py        # Failover and cooldown rotation tests
+    ├── test_formatters.py      # Reset countdown and formatting tests
+    ├── test_lock.py            # File lock concurrency tests
+    ├── test_models.py          # Dataclass serialization and properties tests
+    ├── test_quota.py           # Cloud Code Assist API mock tests
+    ├── test_storage.py         # Profile persistence and atomic swap tests
+    └── test_watch.py           # Log stream pattern detection tests
 ```
-
----
-
-## 8. Verification & Test Plan
-
-Any implementation of this specification should be verified against:
-
-1. **Unit Testing**:
-   - `pytest` test suite with 100% mocked network calls (`_http_post`) and sandboxed directories (`tmp_path`).
-   - Mocking quota JSON responses to verify short-window and weekly bucket calculation.
-   - Concurrency tests verifying lock acquisition and mutual exclusion.
-
-2. **Integration Verification**:
-   - `promux save <name>` correctly copies `~/.gemini/antigravity-cli/antigravity-oauth-token`.
-   - `promux switch <name>` hot-swaps active profile.
-   - `promux quota` parses live Cloud Code responses accurately.
-   - `promux watch` reacts to simulated log appends of `Individual quota reached` within 1 second.

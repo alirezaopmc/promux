@@ -24,6 +24,8 @@ def format_relative_countdown(
         return "-"
 
     current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
     delta = reset_dt - current
 
     if delta <= timedelta(0):
@@ -67,6 +69,8 @@ def format_quota_detail(
 
     countdown = format_relative_countdown(reset_iso, now=now)
     current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
 
     # Format absolute timestamp
     if reset_dt.date() == current.date():

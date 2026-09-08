@@ -5,26 +5,63 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Code Style: PEP 8](https://img.shields.io/badge/code%20style-PEP%208-green.svg)](https://www.python.org/dev/peps/pep-0008/)
 
-Antigravity CLI profile multiplexer and automated quota failover daemon.
+Universal developer CLI profile multiplexer and automated quota failover daemon.
 
-`promux` provides isolated multi-account profile switching and automated quota failover (`429 RESOURCE_EXHAUSTED`) for the Antigravity CLI (`agy`).
+`promux` provides isolated multi-account profile switching and automated quota failover for AI developer CLI tools including **Antigravity CLI (`agy`)**, **Claude Code (`claude`)**, **Codex CLI (`codex`)**, **Cursor CLI (`cursor`)**, and more.
 
-
-Operating as a zero-intrusion filesystem overlay, `promux` keeps your active conversation context, session history, memory, and project artifacts completely intact while dynamically hot-swapping authentication tokens and tracking Cloud Code Assist API quotas.
+Operating as a zero-intrusion filesystem overlay, `promux` keeps your active conversation context, session history, memory, and project artifacts completely intact while dynamically hot-swapping authentication tokens and tracking model API quotas.
 
 ---
 
 ## Key Features
 
-- **Zero External Runtime Dependencies:** Built strictly using the Python 3.10+ standard library (`fcntl`, `urllib`, `argparse`, `dataclasses`, `pathlib`, `json`).
-- **Hot-Swappable Overlay:** Treats `~/.gemini/antigravity-cli/antigravity-oauth-token` as an atomic hot-swappable interface with `0600` permissions. The Antigravity CLI remains completely unaware of underlying account changes.
-- **Shared Workspace & Conversation Continuity:** Workspace sessions, conversation history (`conversations/`, `brain/`, `history.jsonl`), and cached state remain shared across all accounts.
-- **Dual-Loop Quota Awareness:**
+- **Zero External Runtime Dependencies:** Built strictly using the Python 3.10+ standard library (`fcntl`, `urllib`, `argparse`, `dataclasses`, `datetime`, `pathlib`, `json`).
+- **Multi-Tool Architecture:** Unified tool-first CLI grammar (`promux <tool> <command>`) with pluggable adapters and 100% backward compatibility with top-level commands defaulting to `agy`.
+- **Hot-Swappable Overlay:** Atomically manages authentication tokens with `0600` permissions. Developer CLIs remain completely unaware of underlying account changes.
+- **Shared Workspace & Conversation Continuity:** Workspace sessions, conversation history, and cached project state remain intact across profile switches.
+- **Redesigned Quota & Reset Timers:** Real-time quota tracking with inline relative reset countdowns (`98.0% (2h 15m)`) directly after percentages for both 5-hour and weekly windows.
+- **Dual-Loop Failover Awareness (Antigravity):**
   - **Proactive:** Direct REST client queries to Google Cloud Code Assist (`/v1internal:retrieveUserQuotaSummary`) for 5-hour and weekly remaining quotas across Gemini and Claude/GPT model tiers.
   - **Reactive:** Lightweight daemon tails `cli.log` and session logs to detect quota exhaustion events (`Individual quota reached`, `RESOURCE_EXHAUSTED 429`) and reset hints (`Resets in ~Xh Ym`) in real time.
-- **POSIX Concurrency Guarantees:** File locking (`fcntl.flock`) and atomic file replacement (`.tmp` + `os.replace`) prevent race conditions between CLI commands, background daemons, and `agy` operations.
+- **POSIX Concurrency Guarantees:** File locking (`fcntl.flock`) and atomic file replacement (`.tmp` + `os.replace`) prevent race conditions between CLI commands, background daemons, and CLI operations.
 - **LRU Standby Failover:** Intelligently rotates to the least-recently used eligible standby account when the active profile is exhausted, placing exhausted accounts into a temporary cooldown window.
 - **Two-Tier Resilient Token Renewal:** Direct native Google OAuth refresh using official Antigravity client credentials with automatic token rotation; seamless headless `agy` fallback under file mutex. Proactively and automatically renews tokens during `promux switch`, `promux quota`, `promux watch`, and `promux refresh`.
+
+---
+
+## Multi-Tool Support
+
+`promux` organizes profiles per developer tool, allowing developers to manage credentials across different AI coding CLIs with a consistent interface.
+
+To inspect registered tool adapters and capabilities:
+```bash
+promux tools
+```
+Output:
+```text
+TOOL      NAME                  ACTIVE PROFILE  CAPABILITIES
+-------------------------------------------------------------------------
+agy       Antigravity CLI       work            vault, quota, watch, refresh
+claude    Claude Code           -               vault (scaffolded)
+codex     Codex CLI             -               vault (scaffolded)
+cursor    Cursor CLI            -               vault (scaffolded)
+```
+
+### Invocations
+- **Tool-First Mode:** `promux <tool> <command> [args...]`
+  ```bash
+  promux agy list
+  promux agy quota
+  promux claude switch personal
+  promux cursor list
+  ```
+- **Backward-Compatible Default Mode:** `promux <command> [args...]`
+  When invoked without an explicit tool prefix, `promux` defaults to `agy`:
+  ```bash
+  promux list       # equivalent to: promux agy list
+  promux quota      # equivalent to: promux agy quota
+  promux switch dev # equivalent to: promux agy switch dev
+  ```
 
 ---
 
@@ -32,17 +69,28 @@ Operating as a zero-intrusion filesystem overlay, `promux` keeps your active con
 
 ```
 ~/.promux/
-├── accounts/
+├── accounts/                          # Antigravity accounts (backward-compatible)
 │   ├── main/
-│   │   └── antigravity-oauth-token   (chmod 0600)
-│   ├── backup1/
-│   │   └── antigravity-oauth-token   (chmod 0600)
-│   └── backup2/
-│       └── antigravity-oauth-token   (chmod 0600)
-├── state.json                         (atomic state & metadata)
-└── manager.lock                       (fcntl advisory lock)
+│   │   └── antigravity-oauth-token    (chmod 0600)
+│   └── backup1/
+│       └── antigravity-oauth-token    (chmod 0600)
+├── state.json                         # Atomic state & metadata (agy)
+├── manager.lock                       # POSIX fcntl advisory lock (agy)
+└── tools/                             # Scoped storage per developer tool
+    ├── claude/
+    │   ├── accounts/
+    │   ├── state.json
+    │   └── manager.lock
+    ├── codex/
+    │   ├── accounts/
+    │   ├── state.json
+    │   └── manager.lock
+    └── cursor/
+        ├── accounts/
+        ├── state.json
+        └── manager.lock
 
-~/.gemini/antigravity-cli/
+~/.gemini/antigravity-cli/             # Antigravity CLI runtime
 ├── antigravity-oauth-token            (active live token, chmod 0600)
 ├── cli.log                            (monitored by watcher daemon)
 ├── log/                               (session logs monitored by watcher)
@@ -56,7 +104,7 @@ Operating as a zero-intrusion filesystem overlay, `promux` keeps your active con
 ### Prerequisites
 - Linux or macOS
 - Python 3.10 or higher
-- Antigravity CLI (`agy`) installed
+- Antigravity CLI (`agy`) or other supported developer CLIs
 
 ### Recommended: Install via pipx
 For an isolated CLI installation that is automatically linked into your `$PATH`:
@@ -72,11 +120,6 @@ pipx install git+https://github.com/alirezaopmc/promux.git
 ### Install in Editable Mode
 ```bash
 pip install -e . --break-system-packages
-```
-
-Or for regular user installation:
-```bash
-pip install . --break-system-packages
 ```
 
 ### Install with Development Dependencies
@@ -98,64 +141,61 @@ promux --help
 
 ## Quick Start
 
-### 1. Save Your Current Account
-When you are logged in with your primary Antigravity account:
+### 1. View Supported Tools
 ```bash
-promux save main
-```
-This copies the live token into `~/.promux/accounts/main/` and queries the Google OAuth userinfo and Cloud Code Assist APIs to record your email, companion project ID, and plan type.
-
-### 2. Add Secondary Accounts
-Log in with your secondary Google account using `agy`:
-```bash
-agy auth login
-```
-Once authenticated, save it as a named standby profile:
-```bash
-promux save backup1
+promux tools
 ```
 
-Repeat for any additional accounts (`backup2`, `work`, etc.).
+### 2. Save Existing Credentials into the Vault
+Log into your primary account via `agy`, then save it to the vault:
+```bash
+promux save main --email developer1@gmail.com
+```
+
+Next, log into your backup account and save it:
+```bash
+promux save backup1 --email developer2@gmail.com
+```
 
 ### 3. Inspect Vault Profiles
 ```bash
 promux list
 ```
 Output:
-```
+```text
 ACTIVE  NAME              STATE       EMAIL                           COOLDOWN                LAST USED
 --------------------------------------------------------------------------------------------------------------
 *       main              standby     developer1@gmail.com            -                       2026-09-03T22:11:16+00:00
         backup1           standby     developer2@gmail.com            -                       2026-09-03T21:45:00+00:00
 ```
 
-### 4. Check Real Quota Status
+### 4. Check Real Quota Status with Inline Reset Timers
 Query live Cloud Code Assist quota buckets (5-hour and weekly windows) across all accounts in your vault simultaneously:
 ```bash
 promux quota
 ```
 Output:
-```
-ACTIVE  PROFILE           GEMINI (5H)   GEMINI (WK)   CLAUDE (5H)   CLAUDE (WK)   NEXT RESET (UTC)
----------------------------------------------------------------------------------------------------
-*       main              96.1%         82.0%         100.0%        31.7%         16:58:03
-        backup1           100.0%        95.0%         80.0%         60.0%         17:30:00
+```text
+ACTIVE  PROFILE           GEMINI (5H)          GEMINI (WK)          CLAUDE (5H)          CLAUDE (WK)         
+---------------------------------------------------------------------------------------------------------
+*       main              96.1% (2h 15m)       82.0% (3d 4h)        100.0% (-)           31.7% (4d 12h)      
+        backup1           100.0% (-)           95.0% (5d 1h)        80.0% (1h 10m)       60.0% (2d 6h)       
 ```
 
-To view the detailed model group breakdown and exact reset timestamps for an individual account, specify the profile name:
+To view the detailed breakdown and exact reset timestamps for an individual account, specify the profile name:
 ```bash
 promux quota main
 ```
 Output:
-```
+```text
 Quota for account 'main' (project: aicode-consumers) [ACTIVE]:
 
-MODEL GROUP              WINDOW     REMAINING    RESET TIME
-----------------------------------------------------------------------
-Gemini Models            5h         96.1%        2026-09-06T16:58:03Z
-Gemini Models            weekly     82.0%        2026-09-13T10:15:00Z
-Claude & GPT Models      5h         100.0%       -
-Claude & GPT Models      weekly     31.7%        2026-09-13T10:15:00Z
+MODEL GROUP              WINDOW     REMAINING & RESET
+--------------------------------------------------------------------------------
+Gemini Models            5h         96.1% (2h 15m left - 16:58 UTC)
+Gemini Models            weekly     82.0% (3d 4h left - Sep 13 10:15 UTC)
+Claude & GPT Models      5h         100.0% (-)
+Claude & GPT Models      weekly     31.7% (4d 12h left - Sep 13 10:15 UTC)
 ```
 
 ### 5. Manually Switch Profiles
@@ -170,27 +210,38 @@ promux switch backup1
 
 `promux` supports human-readable ASCII tables and structured JSON outputs (via `--json`). The `--json` flag can be placed before or after any subcommand.
 
+### `promux tools [list]`
+Lists all registered tool adapters, active profiles, and capability support.
+
+```bash
+promux tools
+promux tools --json
+```
+
 ### `promux list`
-List all accounts in the vault, displaying active status (`*`), account state (`active`, `standby`, `cooldown`, `disabled`), email, cooldown timestamp, and last-used timestamp.
+List all accounts in the vault for the selected tool, displaying active status (`*`), account state (`active`, `standby`, `cooldown`, `disabled`), email, cooldown timestamp, and last-used timestamp.
 
 ```bash
 promux list
+promux claude list
 promux list --json
 ```
 
 ### `promux save <name> [--email EMAIL]`
-Saves the currently active `antigravity-oauth-token` into the vault under `<name>`. If `--email` is not supplied, `promux` automatically fetches the email via Google OAuth UserInfo API and project metadata via Cloud Code Assist API.
+Saves the currently active credentials into the vault under `<name>`.
 
 ```bash
 promux save personal
 promux save work --email team@company.com
+promux cursor save work
 ```
 
 ### `promux switch <name>`
-Hot-swaps the active profile to `<name>`. Copies the vaulted token into `~/.gemini/antigravity-cli/antigravity-oauth-token` with atomic file replace and `0600` permissions under an advisory lock.
+Hot-swaps the active profile to `<name>` with atomic file replace and `0600` permissions under an advisory lock.
 
 ```bash
 promux switch personal
+promux claude switch work
 ```
 
 ### `promux next [--reason REASON] [--cooldown COOLDOWN]`
@@ -202,15 +253,15 @@ promux next --reason "manual rotation" --cooldown 120
 ```
 
 ### `promux quota [name]`
-Queries Google Cloud Code Assist for live quota fractions and reset timestamps.
-- **Default (no profile name):** Displays an overview matrix table comparing 5-hour and weekly remaining quotas across all accounts in the vault.
-- **Single profile (`promux quota <name>`):** Displays detailed model group views (Gemini vs Claude & GPT across 5-hour and weekly windows) with full reset timestamps.
+Queries Google Cloud Code Assist for live quota fractions and reset countdowns.
+- **Default (no profile name):** Displays an overview table comparing 5-hour and weekly remaining quotas with inline countdowns (`% (countdown)`) across all accounts in the vault.
+- **Single profile (`promux quota <name>`):** Displays detailed model group views (Gemini vs Claude & GPT across 5-hour and weekly windows) with relative countdown and UTC reset time.
 
 ```bash
 # Multi-profile overview table
 promux quota
 
-# Multi-profile overview JSON array
+# Multi-profile overview JSON array (includes 5h_reset_relative and weekly_reset_relative)
 promux quota --json
 
 # Single-account detailed breakdown
@@ -231,7 +282,7 @@ promux whoami --json
 ### `promux refresh [name] [--force]`
 Inspects and refreshes OAuth access tokens across all vault accounts (or a specific account).
 - Renews expired or near-expiry tokens using Tier 1 native OAuth refresh, falling back to Tier 2 headless `agy`.
-- Handles Google OAuth refresh token rotation and syncs active account tokens to `~/.gemini/antigravity-cli/antigravity-oauth-token` atomically.
+- Handles Google OAuth refresh token rotation and syncs active account tokens atomically.
 - `--force`: Force renewal even if the token has not yet reached its expiration buffer.
 
 ```bash
@@ -252,51 +303,28 @@ Removes an account from the vault and cleans up its directory.
 promux remove old-account
 ```
 
-### `promux watch [--poll-seconds SEC] [--cooldown MIN]`
-Starts the reactive log-tailing daemon. Tails `~/.gemini/antigravity-cli/cli.log` and session logs in `~/.gemini/antigravity-cli/log/` for quota depletion errors. Upon detecting exhaustion, it parses reset hints, assigns cooldowns, and hot-swaps to the next eligible profile automatically.
+### `promux watch [--poll-seconds SECONDS] [--cooldown MINUTES]`
+Starts the reactive failover daemon in the foreground, streaming log files for quota error patterns and performing automated hot failover to eligible standby accounts.
 
 ```bash
 promux watch
-promux watch --poll-seconds 0.5 --cooldown 60
+promux watch --poll-seconds 0.5 --cooldown 90
 ```
 
 ### `promux completion <shell>`
-Generate shell auto-completion script for `bash` or `zsh`.
+Generates native shell auto-completion scripts for `bash` or `zsh`.
 
-#### Quick Setup:
 ```bash
-# In ~/.bashrc
-eval "$(promux completion bash)"
+# Bash
+source <(promux completion bash)
 
-# In ~/.zshrc
-eval "$(promux completion zsh)"
-```
-
-Alternatively, you can write the completion script to your shell's completion directory:
-```bash
-# Bash (system-wide or user completion dir)
-promux completion bash | sudo tee /etc/bash_completion.d/promux > /dev/null
-
-# Zsh (using site-functions or fpath directory)
-promux completion zsh > ~/.zfunc/_promux
+# Zsh
+source <(promux completion zsh)
 ```
 
 ---
 
-## Automated Failover Daemon (`promux watch`)
-
-The failover daemon provides autonomous quota failover during continuous coding sessions.
-
-### How Log Tailing Works
-1. **Multi-file Inode Tracking:** The watcher monitors `~/.gemini/antigravity-cli/cli.log` and any active session logs in `~/.gemini/antigravity-cli/log/`. It handles file creation, deletion, truncation, and log rotation by tracking file inodes and size.
-2. **Quota Depletion Signatures:**
-   - `Individual quota reached`
-   - `RESOURCE_EXHAUSTED (code 429)`
-   - `weekly quota reached`
-3. **Reset Time Hint Extraction:** Detects regex patterns like `Resets in ~1h 45m` and calculates precise cooldown intervals. If no reset hint is found, defaults to 60 minutes (or the `--cooldown` override).
-4. **LRU Rotation & Hot-Swap:** Acquires `~/.promux/manager.lock`, selects the LRU standby account not in cooldown, copies its token into `~/.gemini/antigravity-cli/antigravity-oauth-token`, and updates `~/.promux/state.json`.
-
-### Running as a systemd User Service
+## Background Daemon Setup (Systemd)
 
 To run `promux watch` automatically in the background across reboots, create a systemd user service:
 
@@ -335,12 +363,6 @@ systemctl --user status promux.service
 journalctl --user -u promux.service -f
 ```
 
-### Running with nohup or tmux
-Alternatively, run the daemon inside a tmux session or via nohup:
-```bash
-nohup promux watch > ~/.promux/watch.log 2>&1 &
-```
-
 ---
 
 ## Environment Variables
@@ -354,8 +376,6 @@ nohup promux watch > ~/.promux/watch.log 2>&1 &
 
 ## Testing
 
-The project includes an extensive test suite verifying locking semantics, atomic storage operations, Cloud Code REST API client mocking, LRU failover algorithms, reactive log tailing, and CLI subcommands.
-
 Run full test suite:
 ```bash
 pytest -v
@@ -363,12 +383,15 @@ pytest -v
 
 Run specific test modules:
 ```bash
-pytest tests/test_lock.py -v
-pytest tests/test_storage.py -v
-pytest tests/test_quota.py -v
+pytest tests/test_adapters.py -v
+pytest tests/test_formatters.py -v
+pytest tests/test_cli.py -v
 pytest tests/test_failover.py -v
 pytest tests/test_watch.py -v
-pytest tests/test_cli.py -v
+pytest tests/test_storage.py -v
+pytest tests/test_quota.py -v
+pytest tests/test_lock.py -v
+pytest tests/test_completion.py -v
 ```
 
 ---
@@ -389,4 +412,3 @@ To report security vulnerabilities or concerns regarding credential and token ha
 ## License
 
 This project is licensed under the terms of the [MIT License](LICENSE).
-

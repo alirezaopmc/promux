@@ -4,7 +4,6 @@ from typing import Any
 
 from ..constants import GEMINI_CLI_HOME, PROMUX_HOME
 from ..models import QuotaSummary
-from ..quota import QuotaClient
 from ..storage import StorageEngine
 from .base import BaseToolAdapter
 
