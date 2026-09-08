@@ -818,6 +818,74 @@ def _format_expiry_table(expiry_str: str | None) -> str:
         return expiry_str
 
 
+def _refresh_account_token(
+    storage: StorageEngine,
+    account_name: str,
+    force: bool = False,
+) -> tuple[bool, str]:
+    """Execute token refresh for a named account in storage.
+
+    Returns:
+        tuple of (success: bool, message: str)
+    """
+    if not storage.get_account(account_name):
+        return False, f"Account '{account_name}' not found in vault"
+
+    active_profile = storage.get_active_profile()
+    is_active = account_name == active_profile
+    vault_token_path = storage.accounts_dir / account_name / "antigravity-oauth-token"
+
+    if is_active and storage.live_token.exists():
+        if not vault_token_path.exists():
+            _atomic_copy_token(storage.live_token, vault_token_path)
+        else:
+            live_data = _read_token_data(storage.live_token)
+            vault_data = _read_token_data(vault_token_path)
+            lr = _extract_refresh_token(live_data)
+            vr = _extract_refresh_token(vault_data)
+            if not (lr and vr and lr != vr):
+                live_dt = _parse_token_expiry_dt(_extract_expiry(live_data))
+                vault_dt = _parse_token_expiry_dt(_extract_expiry(vault_data))
+                if live_dt and vault_dt and live_dt > vault_dt:
+                    _atomic_copy_token(storage.live_token, vault_token_path)
+
+    token_path = vault_token_path
+    token_data = _read_token_data(token_path)
+    if not token_data and is_active and storage.live_token.exists():
+        token_data = _read_token_data(storage.live_token)
+
+    if not token_data:
+        return False, f"No token data found for account '{account_name}'."
+
+    if not force and not _is_token_expired(token_data):
+        return True, "Token is still valid (not expired)."
+
+    refreshed = _refresh_token_file(token_path, token_data, storage=storage)
+    if refreshed:
+        new_data = _read_token_data(token_path)
+        if is_active:
+            try:
+                should_sync_live = True
+                if storage.live_token.exists():
+                    curr_live_data = _read_token_data(storage.live_token)
+                    curr_lr = _extract_refresh_token(curr_live_data)
+                    ref_lr = _extract_refresh_token(new_data) or _extract_refresh_token(token_data)
+                    if curr_lr and ref_lr and curr_lr != ref_lr:
+                        should_sync_live = False
+                if should_sync_live:
+                    _atomic_copy_token(token_path, storage.live_token)
+            except Exception:
+                pass
+        method = (
+            _last_refresh_method
+            if _last_refresh_method in ("native", "fallback (agy)")
+            else "native"
+        )
+        return True, f"Token refreshed successfully ({method})."
+    else:
+        return False, f"Failed to refresh token ({_last_refresh_method})."
+
+
 def cmd_refresh(
     storage: StorageEngine,
     name: str | None,

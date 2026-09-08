@@ -34,12 +34,18 @@ class LogWatcher:
 
     def __init__(
         self,
-        failover: Any,
+        failover: Any = None,
         log_files: list[Path] | None = None,
         poll_seconds: float = DEFAULT_POLL_SECONDS,
         gemini_home: Path | None = None,
         token_check_interval: float = 900.0,
+        storage: Any = None,
     ):
+        if failover is None and storage is not None:
+            from .failover import FailoverEngine
+
+            failover = FailoverEngine(storage=storage)
+        self.storage = storage or getattr(failover, "storage", None)
         self.failover = failover
         self._custom_log_files = log_files
         self.poll_seconds = poll_seconds

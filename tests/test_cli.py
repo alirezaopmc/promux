@@ -1446,6 +1446,50 @@ def test_atomic_copy_token_permissions_and_atomicity(tmp_path):
     assert oct(dst.stat().st_mode & 0o777) == oct(0o600)
 
 
+def test_refresh_account_token_direct(tmp_path, sample_token_dict, monkeypatch):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import _refresh_account_token, get_storage, main
+
+    storage = get_storage()
+    # 1. Non-existent account
+    ok, msg = _refresh_account_token(storage, "nonexistent")
+    assert ok is False
+    assert "not found" in msg.lower()
+
+    # Save an account
+    assert main(["save", "acct1", "--email", "a1@test.com"]) == 0
+
+    # 2. Token still valid without force
+    sample_token_dict["token"]["expiry"] = "2030-01-01T00:00:00Z"
+    vault_token = storage.accounts_dir / "acct1" / "antigravity-oauth-token"
+    vault_token.write_text(json.dumps(sample_token_dict))
+    ok, msg = _refresh_account_token(storage, "acct1", force=False)
+    assert ok is True
+    assert "still valid" in msg.lower()
+
+    # 3. Force refresh success
+    monkeypatch.setattr("promux.cli._refresh_token_native", lambda p, td: "new_token")
+    ok, msg = _refresh_account_token(storage, "acct1", force=True)
+    assert ok is True
+    assert "refreshed successfully" in msg.lower()
+
+    # 4. Refresh failure
+    monkeypatch.setattr("promux.cli._refresh_token_native", lambda p, td: None)
+    monkeypatch.setattr("promux.cli._refresh_token_fallback_agy", lambda p, s: None)
+    ok, msg = _refresh_account_token(storage, "acct1", force=True)
+    assert ok is False
+    assert "failed" in msg.lower()
+
+    # 5. Missing token data
+    vault_token.unlink()
+    if storage.live_token.exists():
+        storage.live_token.unlink()
+    ok, msg = _refresh_account_token(storage, "acct1", force=True)
+    assert ok is False
+    assert "no token data found" in msg.lower()
+
+
+
 def test_cli_refresh_identity_mismatch_prevents_sync(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
     from promux.cli import main, get_storage

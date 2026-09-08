@@ -1,9 +1,11 @@
 from pathlib import Path
 import pytest
 
+from promux.adapters.agy import AgyAdapter
 from promux.adapters.base import BaseToolAdapter
 from promux.adapters.registry import ToolRegistry
 from promux.adapters.stubs import ClaudeAdapter, CodexAdapter, CursorAdapter
+from promux.adapters import get_default_registry
 from promux.constants import PROMUX_HOME
 from promux.storage import StorageEngine
 
@@ -99,3 +101,57 @@ def test_stub_adapters(tmp_path):
 
         with pytest.raises(NotImplementedError):
             adapter.create_watcher(storage)
+
+
+def test_agy_adapter_properties(tmp_path):
+    gemini_dir = tmp_path / "gemini"
+    gemini_dir.mkdir(parents=True)
+    live_token = gemini_dir / "antigravity-oauth-token"
+    live_token.write_text('{"token": {"access_token": "abc"}}')
+
+    adapter = AgyAdapter(gemini_home=gemini_dir)
+    assert adapter.name == "agy"
+    assert adapter.display_name == "Antigravity CLI"
+    assert adapter.supports_quota is True
+    assert adapter.supports_watch is True
+    assert adapter.supports_refresh is True
+
+    storage = adapter.get_storage(promux_home=tmp_path)
+    assert storage.home == tmp_path
+    assert storage.live_token == live_token
+    assert "vault" in adapter.list_capabilities()
+    assert "quota" in adapter.list_capabilities()
+    assert "watch" in adapter.list_capabilities()
+    assert "refresh" in adapter.list_capabilities()
+
+
+def test_default_registry():
+    reg = get_default_registry()
+    default_tool = reg.default_tool()
+    assert isinstance(default_tool, AgyAdapter)
+    assert default_tool.name == "agy"
+    assert reg.has_tool("agy")
+    assert reg.has_tool("claude")
+    assert reg.has_tool("codex")
+    assert reg.has_tool("cursor")
+
+
+def test_agy_adapter_delegation(tmp_path, monkeypatch):
+    adapter = AgyAdapter()
+    storage = adapter.get_storage(promux_home=tmp_path)
+
+    # test create_watcher
+    watcher = adapter.create_watcher(storage)
+    assert watcher.storage == storage
+
+    # test fetch_quota delegation
+    monkeypatch.setattr("promux.cli._fetch_account_quota", lambda s, name: (None, "test-proj", None))
+    qs, proj, err = adapter.fetch_quota(storage, "test")
+    assert proj == "test-proj"
+
+    # test refresh_account delegation
+    monkeypatch.setattr("promux.cli._refresh_account_token", lambda s, name, force=False: (True, "refreshed"))
+    ok, msg = adapter.refresh_account(storage, "test", force=True)
+    assert ok is True
+    assert msg == "refreshed"
+
