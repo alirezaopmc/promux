@@ -67,7 +67,10 @@ def test_format_relative_countdown():
     # Naive now datetime support
     naive_now = datetime(2026, 9, 9, 12, 0, 0)
     assert format_relative_countdown(t_2h_15m, now=naive_now) == "2h 15m"
-    assert format_quota_detail(0.98, "2026-09-09T14:15:00Z", now=naive_now) == "98.0% (2h 15m left - 14:15 UTC)"
+    assert (
+        format_quota_detail(0.98, "2026-09-09T14:15:00Z", now=naive_now)
+        == "98.0% (2h 15m left - 14:15 UTC)"
+    )
 
 
 def test_format_quota_cell():

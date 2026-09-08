@@ -1216,7 +1216,8 @@ def main(argv: list[str] | None = None) -> int:
     raw_args = list(argv)
 
     # Detect tool-first invocation: promux <tool> <command> [args...]
-    # If the first non-option positional argument matches a registered tool name, route to that tool adapter.
+    # If the first non-option positional argument matches a registered tool name,
+    # route to that tool adapter.
     target_tool = None
     remaining_args = raw_args
 
@@ -1254,7 +1255,8 @@ def main(argv: list[str] | None = None) -> int:
             if required_cap not in caps:
                 caps_str = ", ".join(caps)
                 raise RuntimeError(
-                    f"Tool '{target_tool.name}' does not support '{required_cap}'. Supported capabilities: {caps_str}"
+                    f"Tool '{target_tool.name}' does not support '{required_cap}'. "
+                    f"Supported capabilities: {caps_str}"
                 )
 
         storage = target_tool.get_storage()
