@@ -37,6 +37,8 @@ flowchart TD
         ToolFirst["promux <tool> <command> (e.g. promux agy quota)"]
         TopLevel["promux <command> (defaults to agy)"]
         ToolsCmd["promux tools [list]"]
+        VersionCmd["promux version / -V / --version"]
+        HelpCmd["promux help [command] / promux <tool> help"]
     end
 
     subgraph PromuxDispatcher["Promux CLI Dispatcher"]
@@ -48,7 +50,7 @@ flowchart TD
     end
 
     subgraph PromuxStorage["Promux Vault (~/.promux)"]
-        AgyVault["~/.promux/ (accounts, state.json, manager.lock)"]
+        AgyVault["~/.promux/tools/agy/ (accounts, state.json, manager.lock)"]
         ToolVaults["~/.promux/tools/<tool_name>/ (scoped per tool)"]
     end
 
@@ -179,9 +181,15 @@ Error: Tool 'claude' does not support 'quota'. Supported capabilities: vault
 │   │   └── antigravity-oauth-token
 │   └── <account-2>/
 │       └── antigravity-oauth-token
-├── state.json                          # Central registry & runtime status (agy)
-├── manager.lock                        # Concurrency mutex (agy)
-└── tools/                              # Scoped storage for other CLI tools
+├── state.json                          # Central registry & runtime status (agy, backward-compat)
+├── manager.lock                        # Concurrency mutex (agy, backward-compat)
+└── tools/                              # Uniform scoped storage per developer tool
+    ├── agy/                            # Antigravity CLI tool storage
+    │   ├── accounts/
+    │   │   └── <profile>/
+    │   │       └── antigravity-oauth-token  (chmod 0600)
+    │   ├── state.json
+    │   └── manager.lock
     ├── claude/
     │   ├── accounts/
     │   ├── state.json
@@ -195,6 +203,8 @@ Error: Tool 'claude' does not support 'quota'. Supported capabilities: vault
         ├── state.json
         └── manager.lock
 ```
+
+> **Backward Compatibility:** The root-level `~/.promux/accounts/`, `~/.promux/state.json`, and `~/.promux/manager.lock` paths remain supported for existing `agy` deployments. New installations use `~/.promux/tools/agy/` exclusively. The `AgyAdapter.get_storage()` factory resolves the correct path automatically.
 
 ---
 
@@ -257,10 +267,19 @@ Quota JSON objects include both raw ISO timestamps and human-readable relative c
    ```bash
    promux <command> [args...]
    ```
-   When the first argument is a command name (`list`, `save`, `switch`, `next`, `quota`, `refresh`, `whoami`, `remove`, `watch`, `completion`), it automatically defaults to `agy`.
+   When the first argument is a command name (`list`, `save`, `switch`, `next`, `quota`, `refresh`, `whoami`, `remove`, `watch`, `completion`, `version`, `help`), it automatically defaults to `agy`.
 3. **Tool Inspection:**
    ```bash
    promux tools [list] [--json]
+   ```
+4. **Version Shorthand:**
+   ```bash
+   promux -V
+   promux --version
+   ```
+5. **Tool-Scoped Help:**
+   ```bash
+   promux <tool> help       # e.g. promux claude help
    ```
 
 ### 6.2 Subcommand Matrix
@@ -277,6 +296,20 @@ Quota JSON objects include both raw ISO timestamps and human-readable relative c
 | `remove`| `<name>` | None | `vault` | Remove an account from the vault |
 | `watch` | None | `--poll-seconds`, `--cooldown` | `watch` | Start log tailing failover daemon |
 | `completion` | `<shell>`| None | None | Generate bash/zsh autocomplete script |
+| `version` | None | `--json`, `--no-color` | None | Print version, Python, platform, and tool list |
+| `help` | `[command]` | `--no-color` | None | Display grouped help or per-subcommand help |
+
+### 6.3 Color Output & NO_COLOR Contract
+`promux` emits ANSI color accents in `help` and `version` output. Colors are disabled when any of the following conditions is met (evaluated in order):
+
+| Condition | Effect |
+| :--- | :--- |
+| `stdout` is not a TTY (piped/redirected) | Colors suppressed |
+| `NO_COLOR` environment variable is set (any value) | Colors suppressed |
+| `TERM=dumb` environment variable | Colors suppressed |
+| `--no-color` CLI flag passed | Colors suppressed |
+
+The `--no-color` flag is available on all top-level commands. This follows the [NO_COLOR](https://no-color.org/) standard.
 
 ---
 

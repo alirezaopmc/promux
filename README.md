@@ -74,9 +74,15 @@ cursor    Cursor CLI            -               vault (scaffolded)
 │   │   └── antigravity-oauth-token    (chmod 0600)
 │   └── backup1/
 │       └── antigravity-oauth-token    (chmod 0600)
-├── state.json                         # Atomic state & metadata (agy)
-├── manager.lock                       # POSIX fcntl advisory lock (agy)
-└── tools/                             # Scoped storage per developer tool
+├── state.json                         # Atomic state & metadata (agy, backward-compat)
+├── manager.lock                       # POSIX fcntl advisory lock (agy, backward-compat)
+└── tools/                             # Uniform scoped storage per developer tool
+    ├── agy/                           # Antigravity CLI tool storage
+    │   ├── accounts/
+    │   │   └── <profile>/
+    │   │       └── antigravity-oauth-token  (chmod 0600)
+    │   ├── state.json
+    │   └── manager.lock
     ├── claude/
     │   ├── accounts/
     │   ├── state.json
@@ -96,6 +102,8 @@ cursor    Cursor CLI            -               vault (scaffolded)
 ├── log/                               (session logs monitored by watcher)
 └── conversations/, brain/, ...        (shared session continuity)
 ```
+
+All tool data lives under `~/.promux/tools/<tool>/`, providing a uniform layout. The `agy` tool follows the same structure as other tools under `tools/agy/`. The legacy `~/.promux/accounts/`, `~/.promux/state.json`, and `~/.promux/manager.lock` paths are preserved for backward compatibility.
 
 ---
 
@@ -322,6 +330,61 @@ source <(promux completion bash)
 source <(promux completion zsh)
 ```
 
+### `promux version`
+Prints the promux version, Python runtime version, platform, and supported tools.
+
+```bash
+promux version           # human-readable
+promux version --json    # machine-readable JSON
+promux -V                # shorthand
+promux --version         # shorthand
+```
+
+Output:
+```text
+promux 0.1.0 (Python 3.14.4, Linux-x86_64)
+Supported tools: agy (default), claude, codex, cursor
+```
+
+JSON output:
+```json
+{
+  "version": "0.1.0",
+  "python": "3.14.4",
+  "platform": "Linux-x86_64",
+  "tools": ["agy", "claude", "codex", "cursor"],
+  "default_tool": "agy"
+}
+```
+
+### `promux help [command]`
+Displays grouped, color-accented help. Pass a command name for per-subcommand help.
+
+```bash
+promux help              # grouped top-level help
+promux help quota        # help for the quota subcommand
+promux help switch       # help for the switch subcommand
+promux <tool> help       # help scoped to a tool (e.g. promux claude help)
+```
+
+---
+
+## Color Output & NO_COLOR
+
+`promux` emits ANSI color accents in help output by default. Colors are **automatically disabled** when:
+- Output is piped or redirected (non-TTY stdout)
+- The `NO_COLOR` environment variable is set (any value)
+- `TERM=dumb` is set
+- The `--no-color` flag is passed
+
+```bash
+NO_COLOR=1 promux help       # force plain text
+promux help --no-color       # flag equivalent
+promux version --no-color    # also works on version
+```
+
+The `--no-color` flag is available on all top-level commands.
+
 ---
 
 ## Background Daemon Setup (Systemd)
@@ -371,6 +434,8 @@ journalctl --user -u promux.service -f
 |----------|---------|-------------|
 | `PROMUX_HOME` | `~/.promux` | Root directory for promux accounts vault, state file, and lock |
 | `PROMUX_GEMINI_HOME` | `~/.gemini/antigravity-cli` | Root directory for Antigravity CLI live token and logs |
+| `NO_COLOR` | _(unset)_ | When set (any value), disables all ANSI color output ([no-color.org](https://no-color.org/)) |
+| `TERM` | _(system)_ | When set to `dumb`, disables ANSI color output |
 
 ---
 
