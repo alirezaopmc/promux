@@ -36,17 +36,16 @@ from .formatters import (
 from .models import AccountMeta, QuotaSummary
 from .quota import QuotaClient
 from .storage import StorageEngine
+from .help import cmd_help
 from .version import cmd_version
 from .watch import LogMatch, LogWatcher
 
 
 def get_storage() -> StorageEngine:
     """Instantiate StorageEngine honoring runtime environment overrides."""
-    promux_home = Path(os.environ["PROMUX_HOME"]) if "PROMUX_HOME" in os.environ else None
-    gemini_home = (
-        Path(os.environ["PROMUX_GEMINI_HOME"]) if "PROMUX_GEMINI_HOME" in os.environ else None
-    )
-    return StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
+    from .adapters.agy import AgyAdapter
+
+    return AgyAdapter().get_storage()
 
 
 def _read_token_data(token_path: Path) -> dict[str, Any] | None:
@@ -1110,7 +1109,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="promux",
         description="Antigravity CLI profile multiplexer & quota failover daemon",
+        add_help=False,
         parents=[common_parser],
+    )
+    parser.add_argument(
+        "-h",
+        "--help",
+        action="store_true",
+        default=False,
+        help="Show help and exit",
     )
     parser.add_argument(
         "-V",
@@ -1120,7 +1127,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show version information and exit",
     )
 
-    sub = parser.add_subparsers(dest="command", required=True, help="Subcommand to execute")
+    sub = parser.add_subparsers(dest="command", required=False, help="Subcommand to execute")
 
     # version
     sub.add_parser("version", parents=[common_parser], help="Show version information")
@@ -1221,6 +1228,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_comp = sub.add_parser("completion", help="Generate shell auto-completion script")
     p_comp.add_argument("shell", choices=SUPPORTED_SHELLS, help="Target shell (bash or zsh)")
 
+    # help
+    help_p = sub.add_parser("help", parents=[common_parser], help="Show help for a command")
+    help_p.add_argument(
+        "subcommand",
+        nargs="?",
+        default=None,
+        help="Command to show help for (default: show main help)",
+    )
+
     return parser
 
 
@@ -1231,6 +1247,11 @@ def main(argv: list[str] | None = None) -> int:
 
     registry = get_default_registry()
     raw_args = list(argv)
+
+    # Global -h / --help early intercept (before argparse, to avoid default argparse output)
+    if "-h" in raw_args or "--help" in raw_args:
+        no_color = "--no-color" in raw_args
+        return cmd_help(no_color=no_color)
 
     # Global -V / --version check: if passed anywhere, show version and exit
     if "-V" in raw_args or "--version" in raw_args:
@@ -1250,11 +1271,28 @@ def main(argv: list[str] | None = None) -> int:
             first_pos_idx = i
             break
 
+    tool_name_used: str | None = None
     if first_pos_idx is not None and registry.has_tool(raw_args[first_pos_idx]):
-        target_tool = registry.get(raw_args[first_pos_idx])
+        tool_name_used = raw_args[first_pos_idx]
+        target_tool = registry.get(tool_name_used)
         remaining_args = raw_args[:first_pos_idx] + raw_args[first_pos_idx + 1:]
+        # Tool-first help: promux <tool> help [...]
+        # Check if "help" is the next positional after the tool name
+        next_pos = None
+        for arg in remaining_args:
+            if not arg.startswith("-"):
+                next_pos = arg
+                break
+        if next_pos == "help":
+            no_color = "--no-color" in raw_args
+            return cmd_help(tool=tool_name_used, no_color=no_color)
     else:
         target_tool = registry.default_tool()
+
+    # No command provided: show help
+    if not remaining_args or all(a.startswith("-") for a in remaining_args):
+        no_color = "--no-color" in raw_args
+        return cmd_help(no_color=no_color)
 
     parser = build_parser()
     try:
@@ -1266,6 +1304,10 @@ def main(argv: list[str] | None = None) -> int:
     no_color = getattr(args, "no_color", False)
 
     try:
+        # Help subcommand dispatch
+        if args.command == "help":
+            return cmd_help(subcommand=getattr(args, "subcommand", None), no_color=no_color)
+
         if args.command == "version":
             return cmd_version(json_out=json_out, no_color=no_color)
 
@@ -1308,8 +1350,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "watch":
             return cmd_watch(failover, args.poll_seconds, args.cooldown)
         else:
-            parser.print_help(file=sys.stderr)
-            return 2
+            return cmd_help(no_color=no_color)
     except Exception as e:
         if json_out:
             print(json.dumps({"error": str(e)}, indent=2))

@@ -379,9 +379,9 @@ def test_cli_watch_invocation(tmp_path, sample_token_dict, monkeypatch, capsys):
 
 
 def test_cli_argparse_errors(capsys):
-    # No arguments
+    # No arguments: now shows help (rc == 0)
     rc = main([])
-    assert rc == 2
+    assert rc == 0
 
     # Invalid command
     rc = main(["invalid_command"])
