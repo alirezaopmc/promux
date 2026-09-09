@@ -26,9 +26,13 @@ class AgyAdapter(BaseToolAdapter):
         return GEMINI_CLI_HOME
 
     def get_storage(self, promux_home: Path | None = None) -> StorageEngine:
-        """Return StorageEngine scoped for Antigravity, preserving backward compatibility."""
+        """Return StorageEngine scoped for Antigravity under tools/agy."""
         env_home = Path(os.environ["PROMUX_HOME"]) if "PROMUX_HOME" in os.environ else None
-        home = Path(promux_home or env_home or PROMUX_HOME)
+        base = Path(promux_home or env_home or PROMUX_HOME)
+        if base.name == self.name and base.parent.name == "tools":
+            home = base
+        else:
+            home = base / "tools" / self.name
         return StorageEngine(promux_home=home, gemini_home=self.gemini_home)
 
     @property

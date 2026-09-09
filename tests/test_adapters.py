@@ -118,12 +118,25 @@ def test_agy_adapter_properties(tmp_path):
     assert adapter.supports_refresh is True
 
     storage = adapter.get_storage(promux_home=tmp_path)
-    assert storage.home == tmp_path
+    assert storage.promux_home == tmp_path / "tools" / "agy"
+    assert storage.home == tmp_path / "tools" / "agy"
+    assert storage.accounts_dir == tmp_path / "tools" / "agy" / "accounts"
     assert storage.live_token == live_token
     assert "vault" in adapter.list_capabilities()
     assert "quota" in adapter.list_capabilities()
     assert "watch" in adapter.list_capabilities()
     assert "refresh" in adapter.list_capabilities()
+
+
+def test_agy_adapter_storage_path(tmp_path):
+    adapter = AgyAdapter()
+    storage = adapter.get_storage(promux_home=tmp_path)
+    assert storage.promux_home == tmp_path / "tools" / "agy"
+    assert storage.home == tmp_path / "tools" / "agy"
+    assert storage.accounts_dir == tmp_path / "tools" / "agy" / "accounts"
+
+    storage_default = adapter.get_storage()
+    assert storage_default.home == PROMUX_HOME / "tools" / "agy"
 
 
 def test_default_registry():

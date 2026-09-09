@@ -24,7 +24,7 @@ def fake_promux_home(tmp_path):
 @pytest.fixture
 def storage_with_profiles(tmp_path, sample_token_dict):
     import json
-    from promux.storage import StorageEngine
+    from promux.adapters.agy import AgyAdapter
 
     promux_home = tmp_path / ".promux"
     gemini_home = tmp_path / ".gemini"
@@ -33,7 +33,8 @@ def storage_with_profiles(tmp_path, sample_token_dict):
     live_token.write_text(json.dumps(sample_token_dict))
     live_token.chmod(0o600)
 
-    storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
+    adapter = AgyAdapter(gemini_home=gemini_home)
+    storage = adapter.get_storage(promux_home=promux_home)
     storage.save_profile("work", email="work@company.com", project_id="test-proj")
     storage.save_profile("personal", email="personal@home.org", project_id="test-proj-2")
     return storage
