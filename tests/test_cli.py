@@ -857,8 +857,8 @@ def test_constants_default_credentials(monkeypatch):
     monkeypatch.delenv("PROMUX_OAUTH_CLIENT_SECRET", raising=False)
     importlib.reload(promux.constants)
 
-    assert "apps.googleusercontent.com" in promux.constants.OAUTH_CLIENT_ID
-    assert promux.constants.OAUTH_CLIENT_SECRET.startswith("GOCSPX-")
+    assert promux.constants.OAUTH_CLIENT_ID == "REDACTED_OAUTH_CLIENT_ID"
+    assert promux.constants.OAUTH_CLIENT_SECRET == "REDACTED_OAUTH_CLIENT_SECRET"
     assert promux.constants.DEFAULT_TOKEN_EXPIRY_BUFFER_SECONDS == 60
     assert promux.constants.DEFAULT_PROACTIVE_REFRESH_INTERVAL_SECONDS == 900
     monkeypatch.undo()
