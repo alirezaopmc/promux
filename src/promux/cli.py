@@ -36,6 +36,7 @@ from .formatters import (
 from .models import AccountMeta, QuotaSummary
 from .quota import QuotaClient
 from .storage import StorageEngine
+from .version import cmd_version
 from .watch import LogMatch, LogWatcher
 
 
@@ -1099,14 +1100,30 @@ def build_parser() -> argparse.ArgumentParser:
     common_parser.add_argument(
         "--json", action="store_true", default=argparse.SUPPRESS, help="Output in JSON format"
     )
+    common_parser.add_argument(
+        "--no-color",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Disable ANSI color output",
+    )
 
     parser = argparse.ArgumentParser(
         prog="promux",
         description="Antigravity CLI profile multiplexer & quota failover daemon",
         parents=[common_parser],
     )
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="store_true",
+        default=False,
+        help="Show version information and exit",
+    )
 
     sub = parser.add_subparsers(dest="command", required=True, help="Subcommand to execute")
+
+    # version
+    sub.add_parser("version", parents=[common_parser], help="Show version information")
 
     # list
     sub.add_parser("list", parents=[common_parser], help="List all accounts in the vault")
@@ -1215,6 +1232,12 @@ def main(argv: list[str] | None = None) -> int:
     registry = get_default_registry()
     raw_args = list(argv)
 
+    # Global -V / --version check: if passed anywhere, show version and exit
+    if "-V" in raw_args or "--version" in raw_args:
+        json_out = "--json" in raw_args
+        no_color = "--no-color" in raw_args
+        return cmd_version(json_out=json_out, no_color=no_color)
+
     # Detect tool-first invocation: promux <tool> <command> [args...]
     # If the first non-option positional argument matches a registered tool name,
     # route to that tool adapter.
@@ -1240,8 +1263,12 @@ def main(argv: list[str] | None = None) -> int:
         return e.code if isinstance(e.code, int) else 2
 
     json_out = getattr(args, "json", False)
+    no_color = getattr(args, "no_color", False)
 
     try:
+        if args.command == "version":
+            return cmd_version(json_out=json_out, no_color=no_color)
+
         if args.command == "tools":
             return cmd_tools(registry, json_out)
 

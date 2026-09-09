@@ -27,6 +27,7 @@ def test_tool_registry():
     assert reg.has_tool("dummy")
     assert not reg.has_tool("other")
     assert reg.get("dummy") is dummy
+    assert reg.list_names() == ["dummy"]
     assert "dummy" in [t.name for t in reg.list_all()]
 
 

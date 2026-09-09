@@ -29,6 +29,7 @@ def test_generate_bash_completion() -> None:
 
     # All subcommands included
     assert "tools" in SUBCOMMANDS
+    assert "version" in SUBCOMMANDS
     for cmd in SUBCOMMANDS:
         assert cmd in script
 
@@ -57,6 +58,7 @@ def test_generate_zsh_completion() -> None:
 
     # All subcommands included
     assert "tools" in SUBCOMMANDS
+    assert "version" in SUBCOMMANDS
     for cmd in SUBCOMMANDS:
         assert cmd in script
 

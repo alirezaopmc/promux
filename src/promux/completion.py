@@ -13,6 +13,7 @@ SUBCOMMANDS: list[str] = [
     "watch",
     "completion",
     "tools",
+    "version",
 ]
 
 TOOLS: list[str] = [
@@ -40,9 +41,9 @@ _promux_completion() {
         cword=$COMP_CWORD
     fi
 
-    local commands="list save switch next quota whoami remove watch completion tools"
+    local commands="list save switch next quota whoami remove watch completion tools version"
     local tools="agy claude codex cursor"
-    local common_opts="--json --help -h"
+    local common_opts="--json --no-color -V --version --help -h"
 
     # Accounts helper
     _promux_accounts() {
@@ -150,6 +151,7 @@ _promux() {
         'watch:Start reactive quota failover daemon'
         'completion:Generate shell completion script'
         'tools:List supported developer CLI tools'
+        'version:Show version information'
     )
 
     local -a tools
@@ -162,6 +164,8 @@ _promux() {
 
     _arguments -C \
         '--json[Output structured JSON]' \
+        '--no-color[Disable ANSI color output]' \
+        '(-V --version)'{-V,--version}'[Show version information and exit]' \
         '(-h --help)'{-h,--help}'[Show help]' \
         '1: :->command' \
         '*:: :->args'
@@ -205,6 +209,11 @@ _promux() {
                                     '--json[Output structured JSON]' \
                                     '1:action:(list)'
                                 ;;
+                            version)
+                                _arguments \
+                                    '--json[Output structured JSON]' \
+                                    '--no-color[Disable ANSI color output]'
+                                ;;
                         esac
                     fi
                     ;;
@@ -234,6 +243,11 @@ _promux() {
                     _arguments \
                         '--json[Output structured JSON]' \
                         '1:action:(list)'
+                    ;;
+                version)
+                    _arguments \
+                        '--json[Output structured JSON]' \
+                        '--no-color[Disable ANSI color output]'
                     ;;
                 completion)
                     _arguments \

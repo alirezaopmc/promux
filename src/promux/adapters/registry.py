@@ -22,6 +22,9 @@ class ToolRegistry:
     def has_tool(self, name: str) -> bool:
         return name in self._adapters
 
+    def list_names(self) -> list[str]:
+        return list(self._adapters.keys())
+
     def list_all(self) -> list[BaseToolAdapter]:
         return list(self._adapters.values())
 
