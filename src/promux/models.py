@@ -103,3 +103,10 @@ class RotationResult:
     to_account: str | None
     reason: str
     cooldown_until: datetime | None = None
+
+
+@dataclass
+class SmartRotationResult(RotationResult):
+    model: str = "gemini"
+    five_hour_remaining: float | None = None
+    weekly_remaining: float | None = None

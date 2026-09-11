@@ -154,6 +154,38 @@ def test_rotation_result_dataclass():
     assert rr.cooldown_until == now
 
 
+def test_smart_rotation_result_model():
+    from promux.models import RotationResult, SmartRotationResult
+
+    res = SmartRotationResult(
+        success=True,
+        from_account="main",
+        to_account="backup1",
+        reason="smart",
+        model="gemini",
+        five_hour_remaining=0.95,
+        weekly_remaining=0.80,
+    )
+    assert isinstance(res, RotationResult)
+    assert res.success is True
+    assert res.from_account == "main"
+    assert res.to_account == "backup1"
+    assert res.model == "gemini"
+    assert res.five_hour_remaining == 0.95
+    assert res.weekly_remaining == 0.80
+
+    res_default = SmartRotationResult(
+        success=False,
+        from_account="main",
+        to_account=None,
+        reason="exhausted",
+    )
+    assert isinstance(res_default, RotationResult)
+    assert res_default.model == "gemini"
+    assert res_default.five_hour_remaining is None
+    assert res_default.weekly_remaining is None
+
+
 def test_constants_regex_signatures():
     # Individual quota
     assert INDIVIDUAL_QUOTA_RE.search("Error: Individual quota reached for this model")
