@@ -237,17 +237,17 @@ class FailoverEngine:
                         active_5h = active_qs.gemini_5h_remaining
                         active_wk = active_qs.gemini_weekly_remaining
                         active_reset = (
-                            active_qs.gemini_5h_reset
-                            if (active_5h is not None and active_5h <= 0.0)
-                            else active_qs.gemini_weekly_reset
+                            active_qs.gemini_weekly_reset
+                            if (active_wk is not None and active_wk <= 0.0)
+                            else active_qs.gemini_5h_reset
                         )
                     else:
                         active_5h = active_qs.third_party_5h_remaining
                         active_wk = active_qs.third_party_weekly_remaining
                         active_reset = (
-                            active_qs.third_party_5h_reset
-                            if (active_5h is not None and active_5h <= 0.0)
-                            else active_qs.third_party_weekly_reset
+                            active_qs.third_party_weekly_reset
+                            if (active_wk is not None and active_wk <= 0.0)
+                            else active_qs.third_party_5h_reset
                         )
 
                     if (active_5h is not None and active_5h <= 0.0) or (

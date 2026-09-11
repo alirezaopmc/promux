@@ -465,6 +465,70 @@ def test_rotate_smart_active_cooldown_only_when_exhausted():
     assert active_meta2.state == AccountState.STANDBY
 
 
+def test_rotate_smart_cooldown_prioritizes_weekly_reset_when_both_exhausted():
+    from promux.models import QuotaSummary
+
+    storage = FakeStorage()
+    now = datetime.now(timezone.utc)
+    storage.state["active"] = "acc_active"
+    storage.state["accounts"] = {
+        "acc_active": AccountMeta(name="acc_active", enabled=True, last_used_at=now).to_dict(),
+        "acc_target": AccountMeta(name="acc_target", enabled=True).to_dict(),
+    }
+
+    reset_5h = (now + timedelta(minutes=30)).isoformat()
+    reset_weekly = (now + timedelta(days=2)).isoformat()
+
+    # Gemini model: both 5h and weekly are 0.0 -> weekly reset must be used for cooldown
+    quotas_gemini = {
+        "acc_active": QuotaSummary(
+            gemini_5h_remaining=0.0,
+            gemini_weekly_remaining=0.0,
+            gemini_5h_reset=reset_5h,
+            gemini_weekly_reset=reset_weekly,
+        ),
+        "acc_target": QuotaSummary(gemini_5h_remaining=0.9, gemini_weekly_remaining=0.9),
+    }
+
+    engine = FailoverEngine(storage)
+    res = engine.rotate_smart(
+        quota_fetcher=lambda a: (quotas_gemini.get(a), "proj-1", None), model="gemini"
+    )
+    assert res.success is True
+    assert res.cooldown_until is not None
+    active_meta = AccountMeta.from_dict(storage.state["accounts"]["acc_active"])
+    assert active_meta.state == AccountState.COOLDOWN
+    # Cooldown should reflect ~2 days (2880 mins), NOT 30 mins
+    delta_mins = (active_meta.cooldown_until - now).total_seconds() / 60
+    assert delta_mins > 2800
+
+    # Reset active account for third-party (e.g. claude) test
+    storage.state["active"] = "acc_active"
+    storage.state["accounts"]["acc_active"]["cooldown_until"] = None
+    reset_3p_5h = (now + timedelta(minutes=45)).isoformat()
+    reset_3p_weekly = (now + timedelta(days=3)).isoformat()
+
+    quotas_3p = {
+        "acc_active": QuotaSummary(
+            third_party_5h_remaining=0.0,
+            third_party_weekly_remaining=0.0,
+            third_party_5h_reset=reset_3p_5h,
+            third_party_weekly_reset=reset_3p_weekly,
+        ),
+        "acc_target": QuotaSummary(third_party_5h_remaining=0.9, third_party_weekly_remaining=0.9),
+    }
+
+    res_3p = engine.rotate_smart(
+        quota_fetcher=lambda a: (quotas_3p.get(a), "proj-1", None), model="claude"
+    )
+    assert res_3p.success is True
+    assert res_3p.cooldown_until is not None
+    active_meta_3p = AccountMeta.from_dict(storage.state["accounts"]["acc_active"])
+    assert active_meta_3p.state == AccountState.COOLDOWN
+    delta_mins_3p = (active_meta_3p.cooldown_until - now).total_seconds() / 60
+    assert delta_mins_3p > 4200
+
+
 def test_rotate_smart_no_eligible_candidates():
     from promux.models import QuotaSummary
 
