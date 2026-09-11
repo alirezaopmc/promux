@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-11
+
+### Added
+- Smart quota-aware profile switching via `promux switch --smart [--model {gemini,claude,gpt}]`.
+- Automated candidate evaluation querying live Cloud Code Assist API quotas across standby profiles.
+- Model tier filtering supporting `gemini` (default) and third-party models (`claude`, `gpt`).
+- Smart ranking metric prioritizing 5-hour available quota fraction, weekly quota, and LRU tie-breaker.
+- Conditional active profile cooldown: quarantines departed account only if its quota is exhausted.
+
 ## [0.2.0] - 2026-09-07
 
 ### Added
