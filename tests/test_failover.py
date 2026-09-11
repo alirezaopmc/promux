@@ -169,3 +169,443 @@ def test_rotate_next_no_prior_active_account():
     assert res.from_account is None
     assert res.to_account == "acc1"
     assert storage.state["active"] == "acc1"
+
+
+def test_rotate_smart_selects_highest_5h_quota():
+    from promux.models import QuotaSummary
+
+    storage = FakeStorage()
+    now = datetime.now(timezone.utc)
+    storage.state["active"] = "acc_active"
+    storage.state["accounts"] = {
+        "acc_active": AccountMeta(name="acc_active", enabled=True, last_used_at=now).to_dict(),
+        "acc_low": AccountMeta(
+            name="acc_low", enabled=True, last_used_at=now - timedelta(hours=3)
+        ).to_dict(),
+        "acc_high": AccountMeta(
+            name="acc_high", enabled=True, last_used_at=now - timedelta(hours=2)
+        ).to_dict(),
+    }
+
+    quotas = {
+        "acc_active": QuotaSummary(gemini_5h_remaining=0.0, gemini_weekly_remaining=0.5),
+        "acc_low": QuotaSummary(gemini_5h_remaining=0.4, gemini_weekly_remaining=0.9),
+        "acc_high": QuotaSummary(gemini_5h_remaining=0.9, gemini_weekly_remaining=0.9),
+    }
+
+    def fetcher(acct_name):
+        return quotas.get(acct_name), "proj-1", None
+
+    engine = FailoverEngine(storage)
+    res = engine.rotate_smart(quota_fetcher=fetcher, model="gemini")
+
+    assert res.success is True
+    assert res.from_account == "acc_active"
+    assert res.to_account == "acc_high"
+    assert res.five_hour_remaining == 0.9
+    assert res.weekly_remaining == 0.9
+    assert storage.state["active"] == "acc_high"
+
+    # Active account had 0.0 quota, so must be in cooldown
+    active_meta = AccountMeta.from_dict(storage.state["accounts"]["acc_active"])
+    assert active_meta.state == AccountState.COOLDOWN
+
+
+def test_rotate_smart_active_account_retains_standby_if_quota_available():
+    from promux.models import QuotaSummary
+
+    storage = FakeStorage()
+    now = datetime.now(timezone.utc)
+    storage.state["active"] = "acc_active"
+    storage.state["accounts"] = {
+        "acc_active": AccountMeta(name="acc_active", enabled=True, last_used_at=now).to_dict(),
+        "acc_other": AccountMeta(
+            name="acc_other", enabled=True, last_used_at=now - timedelta(hours=1)
+        ).to_dict(),
+    }
+
+    quotas = {
+        "acc_active": QuotaSummary(gemini_5h_remaining=0.5, gemini_weekly_remaining=0.5),
+        "acc_other": QuotaSummary(gemini_5h_remaining=1.0, gemini_weekly_remaining=1.0),
+    }
+
+    def fetcher(acct_name):
+        return quotas.get(acct_name), "proj-1", None
+
+    engine = FailoverEngine(storage)
+    res = engine.rotate_smart(quota_fetcher=fetcher, model="gemini")
+
+    assert res.success is True
+    assert res.to_account == "acc_other"
+    # acc_active had 0.5 quota > 0, so should NOT be in cooldown
+    active_meta = AccountMeta.from_dict(storage.state["accounts"]["acc_active"])
+    assert active_meta.state == AccountState.STANDBY
+
+
+def test_rotate_smart_third_party_models():
+    from promux.models import QuotaSummary
+
+    storage = FakeStorage()
+    storage.state["active"] = "acc_active"
+    storage.state["accounts"] = {
+        "acc_active": AccountMeta(name="acc_active", enabled=True).to_dict(),
+        "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
+        "acc2": AccountMeta(name="acc2", enabled=True).to_dict(),
+    }
+
+    # acc1 has high Gemini but 0 Claude; acc2 has high Claude
+    quotas = {
+        "acc_active": QuotaSummary(third_party_5h_remaining=0.0, third_party_weekly_remaining=0.1),
+        "acc1": QuotaSummary(gemini_5h_remaining=1.0, third_party_5h_remaining=0.0),
+        "acc2": QuotaSummary(
+            gemini_5h_remaining=0.1,
+            third_party_5h_remaining=0.8,
+            third_party_weekly_remaining=0.9,
+        ),
+    }
+
+    def fetcher(acct_name):
+        return quotas.get(acct_name), "proj-1", None
+
+    engine = FailoverEngine(storage)
+    res = engine.rotate_smart(quota_fetcher=fetcher, model="claude")
+
+    assert res.success is True
+    assert res.to_account == "acc2"
+    assert res.five_hour_remaining == 0.8
+
+
+def test_rotate_smart_tiebreak_weekly_and_lru():
+    from promux.models import QuotaSummary
+
+    storage = FakeStorage()
+    now = datetime.now(timezone.utc)
+    storage.state["active"] = "acc_active"
+    # Scenario A: 5h equal, weekly differs -> higher weekly wins
+    storage.state["accounts"] = {
+        "acc_active": AccountMeta(name="acc_active", enabled=True, last_used_at=now).to_dict(),
+        "acc1": AccountMeta(
+            name="acc1", enabled=True, last_used_at=now - timedelta(hours=1)
+        ).to_dict(),
+        "acc2": AccountMeta(
+            name="acc2", enabled=True, last_used_at=now - timedelta(hours=2)
+        ).to_dict(),
+    }
+    quotas = {
+        "acc_active": QuotaSummary(gemini_5h_remaining=0.0, gemini_weekly_remaining=0.0),
+        "acc1": QuotaSummary(gemini_5h_remaining=0.8, gemini_weekly_remaining=0.9),
+        "acc2": QuotaSummary(gemini_5h_remaining=0.8, gemini_weekly_remaining=0.7),
+    }
+
+    def fetcher(acct_name):
+        return quotas.get(acct_name), "proj-1", None
+
+    engine = FailoverEngine(storage)
+    res = engine.rotate_smart(quota_fetcher=fetcher, model="gemini")
+    assert res.success is True
+    assert res.to_account == "acc1"
+
+    # Scenario B: 5h and weekly both equal -> LRU tiebreaker (None first, then oldest last_used_at)
+    storage.state["accounts"] = {
+        "acc_active": AccountMeta(name="acc_active", enabled=True, last_used_at=now).to_dict(),
+        "acc_recent": AccountMeta(
+            name="acc_recent", enabled=True, last_used_at=now - timedelta(hours=1)
+        ).to_dict(),
+        "acc_older": AccountMeta(
+            name="acc_older", enabled=True, last_used_at=now - timedelta(hours=5)
+        ).to_dict(),
+        "acc_never": AccountMeta(name="acc_never", enabled=True, last_used_at=None).to_dict(),
+    }
+    quotas_b = {
+        "acc_active": QuotaSummary(gemini_5h_remaining=0.0, gemini_weekly_remaining=0.0),
+        "acc_recent": QuotaSummary(gemini_5h_remaining=0.8, gemini_weekly_remaining=0.8),
+        "acc_older": QuotaSummary(gemini_5h_remaining=0.8, gemini_weekly_remaining=0.8),
+        "acc_never": QuotaSummary(gemini_5h_remaining=0.8, gemini_weekly_remaining=0.8),
+    }
+    res_b = engine.rotate_smart(
+        quota_fetcher=lambda a: (quotas_b.get(a), "proj-1", None), model="gemini"
+    )
+    assert res_b.success is True
+    assert res_b.to_account == "acc_never"
+
+    # Remove acc_never -> acc_older should win over acc_recent
+    del storage.state["accounts"]["acc_never"]
+    res_c = engine.rotate_smart(
+        quota_fetcher=lambda a: (quotas_b.get(a), "proj-1", None), model="gemini"
+    )
+    assert res_c.success is True
+    assert res_c.to_account == "acc_older"
+
+
+def test_rotate_smart_filters_zero_quota():
+    from promux.models import QuotaSummary
+
+    storage = FakeStorage()
+    now = datetime.now(timezone.utc)
+    storage.state["active"] = "acc_active"
+    storage.state["accounts"] = {
+        "acc_active": AccountMeta(name="acc_active", enabled=True, last_used_at=now).to_dict(),
+        "acc_zero_5h": AccountMeta(name="acc_zero_5h", enabled=True).to_dict(),
+        "acc_zero_wk": AccountMeta(name="acc_zero_wk", enabled=True).to_dict(),
+        "acc_valid": AccountMeta(name="acc_valid", enabled=True).to_dict(),
+    }
+    quotas = {
+        "acc_active": QuotaSummary(gemini_5h_remaining=0.0, gemini_weekly_remaining=0.0),
+        "acc_zero_5h": QuotaSummary(gemini_5h_remaining=0.0, gemini_weekly_remaining=0.9),
+        "acc_zero_wk": QuotaSummary(gemini_5h_remaining=0.9, gemini_weekly_remaining=0.0),
+        "acc_valid": QuotaSummary(gemini_5h_remaining=0.1, gemini_weekly_remaining=0.1),
+    }
+
+    engine = FailoverEngine(storage)
+    res = engine.rotate_smart(
+        quota_fetcher=lambda a: (quotas.get(a), "proj-1", None), model="gemini"
+    )
+    assert res.success is True
+    assert res.to_account == "acc_valid"
+
+
+def test_rotate_smart_model_mapping():
+    from promux.models import QuotaSummary
+
+    storage = FakeStorage()
+    storage.state["active"] = "acc_active"
+    storage.state["accounts"] = {
+        "acc_active": AccountMeta(name="acc_active", enabled=True).to_dict(),
+        "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
+        "acc2": AccountMeta(name="acc2", enabled=True).to_dict(),
+    }
+
+    # acc1 has high Gemini but 0 Claude; acc2 has high Claude
+    quotas = {
+        "acc_active": QuotaSummary(gemini_5h_remaining=0.0, third_party_5h_remaining=0.0),
+        "acc1": QuotaSummary(gemini_5h_remaining=1.0, third_party_5h_remaining=0.0),
+        "acc2": QuotaSummary(
+            gemini_5h_remaining=0.1,
+            third_party_5h_remaining=0.8,
+            third_party_weekly_remaining=0.9,
+        ),
+    }
+
+    def fetcher(acct_name):
+        return quotas.get(acct_name), "proj-1", None
+
+    engine = FailoverEngine(storage)
+
+    # For Claude, acc2 wins
+    res_claude = engine.rotate_smart(quota_fetcher=fetcher, model="claude")
+    assert res_claude.success is True
+    assert res_claude.to_account == "acc2"
+    assert res_claude.five_hour_remaining == 0.8
+
+    # Reset active
+    storage.state["active"] = "acc_active"
+
+    # For GPT, acc2 also wins (uses third_party quota)
+    res_gpt = engine.rotate_smart(quota_fetcher=fetcher, model="gpt")
+    assert res_gpt.success is True
+    assert res_gpt.to_account == "acc2"
+    assert res_gpt.five_hour_remaining == 0.8
+
+    # Reset active
+    storage.state["active"] = "acc_active"
+
+    # For Gemini, acc1 wins (uses gemini quota)
+    res_gemini = engine.rotate_smart(quota_fetcher=fetcher, model="gemini")
+    assert res_gemini.success is True
+    assert res_gemini.to_account == "acc1"
+    assert res_gemini.five_hour_remaining == 1.0
+
+
+def test_rotate_smart_active_cooldown_only_when_exhausted():
+    from promux.models import QuotaSummary
+
+    storage = FakeStorage()
+    now = datetime.now(timezone.utc)
+    storage.state["active"] = "acc_active"
+    storage.state["accounts"] = {
+        "acc_active": AccountMeta(name="acc_active", enabled=True, last_used_at=now).to_dict(),
+        "acc_target": AccountMeta(name="acc_target", enabled=True).to_dict(),
+    }
+
+    # Case 1: active has 0.0 quota and explicit reset time -> gets cooldown until reset
+    reset_future = (now + timedelta(minutes=40)).isoformat()
+    quotas_exhausted = {
+        "acc_active": QuotaSummary(
+            gemini_5h_remaining=0.0,
+            gemini_weekly_remaining=0.5,
+            gemini_5h_reset=reset_future,
+        ),
+        "acc_target": QuotaSummary(gemini_5h_remaining=0.9, gemini_weekly_remaining=0.9),
+    }
+
+    engine = FailoverEngine(storage)
+    res1 = engine.rotate_smart(
+        quota_fetcher=lambda a: (quotas_exhausted.get(a), "proj-1", None), model="gemini"
+    )
+    assert res1.success is True
+    assert res1.cooldown_until is not None
+    active_meta1 = AccountMeta.from_dict(storage.state["accounts"]["acc_active"])
+    assert active_meta1.state == AccountState.COOLDOWN
+    delta_mins = (active_meta1.cooldown_until - now).total_seconds() / 60
+    assert 38 <= delta_mins <= 42
+
+    # Case 2: active has remaining quota -> stays in STANDBY, cooldown_until is None
+    storage.state["active"] = "acc_active"
+    storage.state["accounts"]["acc_active"]["cooldown_until"] = None
+    quotas_available = {
+        "acc_active": QuotaSummary(gemini_5h_remaining=0.5, gemini_weekly_remaining=0.5),
+        "acc_target": QuotaSummary(gemini_5h_remaining=0.9, gemini_weekly_remaining=0.9),
+    }
+    res2 = engine.rotate_smart(
+        quota_fetcher=lambda a: (quotas_available.get(a), "proj-1", None), model="gemini"
+    )
+    assert res2.success is True
+    assert res2.cooldown_until is None
+    active_meta2 = AccountMeta.from_dict(storage.state["accounts"]["acc_active"])
+    assert active_meta2.state == AccountState.STANDBY
+
+
+def test_rotate_smart_cooldown_prioritizes_weekly_reset_when_both_exhausted():
+    from promux.models import QuotaSummary
+
+    storage = FakeStorage()
+    now = datetime.now(timezone.utc)
+    storage.state["active"] = "acc_active"
+    storage.state["accounts"] = {
+        "acc_active": AccountMeta(name="acc_active", enabled=True, last_used_at=now).to_dict(),
+        "acc_target": AccountMeta(name="acc_target", enabled=True).to_dict(),
+    }
+
+    reset_5h = (now + timedelta(minutes=30)).isoformat()
+    reset_weekly = (now + timedelta(days=2)).isoformat()
+
+    # Gemini model: both 5h and weekly are 0.0 -> weekly reset must be used for cooldown
+    quotas_gemini = {
+        "acc_active": QuotaSummary(
+            gemini_5h_remaining=0.0,
+            gemini_weekly_remaining=0.0,
+            gemini_5h_reset=reset_5h,
+            gemini_weekly_reset=reset_weekly,
+        ),
+        "acc_target": QuotaSummary(gemini_5h_remaining=0.9, gemini_weekly_remaining=0.9),
+    }
+
+    engine = FailoverEngine(storage)
+    res = engine.rotate_smart(
+        quota_fetcher=lambda a: (quotas_gemini.get(a), "proj-1", None), model="gemini"
+    )
+    assert res.success is True
+    assert res.cooldown_until is not None
+    active_meta = AccountMeta.from_dict(storage.state["accounts"]["acc_active"])
+    assert active_meta.state == AccountState.COOLDOWN
+    # Cooldown should reflect ~2 days (2880 mins), NOT 30 mins
+    delta_mins = (active_meta.cooldown_until - now).total_seconds() / 60
+    assert delta_mins > 2800
+
+    # Reset active account for third-party (e.g. claude) test
+    storage.state["active"] = "acc_active"
+    storage.state["accounts"]["acc_active"]["cooldown_until"] = None
+    reset_3p_5h = (now + timedelta(minutes=45)).isoformat()
+    reset_3p_weekly = (now + timedelta(days=3)).isoformat()
+
+    quotas_3p = {
+        "acc_active": QuotaSummary(
+            third_party_5h_remaining=0.0,
+            third_party_weekly_remaining=0.0,
+            third_party_5h_reset=reset_3p_5h,
+            third_party_weekly_reset=reset_3p_weekly,
+        ),
+        "acc_target": QuotaSummary(third_party_5h_remaining=0.9, third_party_weekly_remaining=0.9),
+    }
+
+    res_3p = engine.rotate_smart(
+        quota_fetcher=lambda a: (quotas_3p.get(a), "proj-1", None), model="claude"
+    )
+    assert res_3p.success is True
+    assert res_3p.cooldown_until is not None
+    active_meta_3p = AccountMeta.from_dict(storage.state["accounts"]["acc_active"])
+    assert active_meta_3p.state == AccountState.COOLDOWN
+    delta_mins_3p = (active_meta_3p.cooldown_until - now).total_seconds() / 60
+    assert delta_mins_3p > 4200
+
+
+def test_rotate_smart_no_eligible_candidates():
+    from promux.models import QuotaSummary
+
+    storage = FakeStorage()
+    storage.state["active"] = "acc_active"
+    storage.state["accounts"] = {
+        "acc_active": AccountMeta(name="acc_active", enabled=True).to_dict(),
+    }
+
+    engine = FailoverEngine(storage)
+    # Case A: no standby accounts at all
+    res1 = engine.rotate_smart(quota_fetcher=lambda a: (QuotaSummary(), "p", None), model="gemini")
+    assert res1.success is False
+    assert res1.from_account == "acc_active"
+    assert res1.to_account is None
+    assert res1.reason == "No eligible standby accounts"
+    assert res1.cooldown_until is None
+
+    # Case B: standby account exists but all have 0 quota
+    storage.state["accounts"]["acc_standby"] = AccountMeta(
+        name="acc_standby", enabled=True
+    ).to_dict()
+    zero_quota = QuotaSummary(gemini_5h_remaining=0.0, gemini_weekly_remaining=0.0)
+    res2 = engine.rotate_smart(quota_fetcher=lambda a: (zero_quota, "p", None), model="gemini")
+    assert res2.success is False
+    assert res2.from_account == "acc_active"
+    assert res2.to_account is None
+    assert res2.reason == "No standby accounts found with available quota for 'gemini' models"
+    assert res2.cooldown_until is None
+    active_meta = AccountMeta.from_dict(storage.state["accounts"]["acc_active"])
+    assert active_meta.state == AccountState.STANDBY
+
+
+def test_rotate_smart_switch_failure():
+    from promux.models import QuotaSummary
+
+    storage = FakeStorage()
+    storage.fail_switch = True
+    storage.state["active"] = "acc_active"
+    storage.state["accounts"] = {
+        "acc_active": AccountMeta(name="acc_active", enabled=True).to_dict(),
+        "acc_standby": AccountMeta(name="acc_standby", enabled=True).to_dict(),
+    }
+    quota = QuotaSummary(gemini_5h_remaining=0.9, gemini_weekly_remaining=0.9)
+    engine = FailoverEngine(storage)
+    res = engine.rotate_smart(quota_fetcher=lambda a: (quota, "p", None), model="gemini")
+
+    assert res.success is False
+    assert res.from_account == "acc_active"
+    assert res.to_account == "acc_standby"
+    assert "Failed to switch token to acc_standby" in res.reason
+    assert res.cooldown_until is None
+    active_meta = AccountMeta.from_dict(storage.state["accounts"]["acc_active"])
+    assert active_meta.state == AccountState.STANDBY
+
+
+def test_parse_iso_reset_minutes():
+    engine = FailoverEngine(FakeStorage())
+    now = datetime.now(timezone.utc)
+
+    # Future 45 minutes
+    future_iso = (now + timedelta(minutes=45)).isoformat()
+    assert engine._parse_iso_reset_minutes(future_iso) in (45, 46)
+
+    # Future with Z notation
+    future_z = (now + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert engine._parse_iso_reset_minutes(future_z) in (30, 31)
+
+    # In the past -> returns default
+    past_iso = (now - timedelta(minutes=10)).isoformat()
+    assert engine._parse_iso_reset_minutes(past_iso) == 60
+
+    # None -> returns default
+    assert engine._parse_iso_reset_minutes(None) == 60
+
+    # Invalid string -> returns default
+    assert engine._parse_iso_reset_minutes("not-a-date") == 60
+
+    # Custom default
+    assert engine._parse_iso_reset_minutes(None, default_minutes=120) == 120

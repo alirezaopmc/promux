@@ -3,8 +3,8 @@
 
 > **Package Name:** `promux`  
 > **Directory:** `~/Dev/promux`  
-> **Version:** 1.0.0  
-> **Date:** 2026-09-08  
+> **Version:** 0.3.0  
+> **Date:** 2026-09-11  
 > **Author:** Alireza Opmc  
 
 ---
@@ -253,6 +253,48 @@ Quota JSON objects include both raw ISO timestamps and human-readable relative c
 }
 ```
 
+### 5.4 Smart Quota-Aware Profile Switching
+
+#### 5.4.1 Objectives & Problem Space
+Manual profile selection (`promux switch <name>`) requires developers to guess available quotas or run `promux quota` beforehand. Automated reactive failover (`promux next`) uses least-recently used (LRU) standby rotation without verifying that the standby profile actually has sufficient remaining API quota.
+
+Smart quota-aware profile switching adds automated quota-evaluated rotation:
+```bash
+promux switch --smart [--model {gemini,claude,gpt}]
+```
+It queries live Cloud Code Assist API quotas across candidate standby accounts, filters out exhausted profiles, ranks candidates by highest available quota, hot-swaps to the best profile, and conditionally applies cooldown to the departed account.
+
+#### 5.4.2 Candidate Filtering & Evaluation Algorithm
+1. **Candidate Scope:** Queries all standby accounts in `AccountState.STANDBY` (enabled and not currently in active cooldown), strictly excluding the currently active profile.
+2. **Model Evaluation:**
+   - `--model gemini` (default): evaluates `gemini_5h_remaining` and `gemini_weekly_remaining`.
+   - `--model claude` or `--model gpt`: evaluates `third_party_5h_remaining` and `third_party_weekly_remaining` (the shared third-party model quota bucket in Cloud Code Assist).
+3. **Disqualification:** Discards candidates if the API quota fetch fails or if remaining quota fraction is non-positive (`<= 0.0`) in either 5-hour or weekly windows.
+4. **Ranking Metric:**
+   - **Primary:** Highest 5-hour available quota fraction (`five_hour_remaining` descending).
+   - **Secondary:** Highest weekly available quota fraction (`weekly_remaining` descending).
+   - **Tertiary (tie-breaker):** Least-recently used (oldest `last_used_at` ascending, `None` prioritized).
+5. **Conditional Cooldown on Departing Account:**
+   - If the active account being rotated away from has exhausted quota (`<= 0.0` in 5-hour or weekly window for the evaluated model tier), it is quarantined into cooldown using its parsed reset timestamp (or a 60-minute default).
+   - If the departing active account retains positive quota (> 0% in both windows), it remains in a clean `STANDBY` state without cooldown.
+6. **Zero-Candidate Handling:** If no standby accounts have available quota, no switch occurs, a descriptive error message is returned to `stderr` (or structured error via `--json`), and exit code 1 is returned.
+
+#### 5.4.3 Data Model & JSON Schema
+The `SmartRotationResult` dataclass extends `RotationResult` with target model and evaluated quota metrics:
+```json
+{
+  "success": true,
+  "from_account": "main",
+  "to_account": "backup1",
+  "model": "gemini",
+  "quota": {
+    "5h_remaining": 1.0,
+    "weekly_remaining": 0.95
+  },
+  "cooldown_until": null
+}
+```
+
 ---
 
 ## 6. Command Line Interface (CLI) Contract
@@ -288,7 +330,7 @@ Quota JSON objects include both raw ISO timestamps and human-readable relative c
 | `tools` | `[list]` | `--json` | None | List registered CLI tools and capabilities |
 | `list` | None | `--json` | `vault` | List all accounts in the vault for the selected tool |
 | `save` | `<name>` | `--email` | `vault` | Save active credentials into the vault |
-| `switch`| `<name>` | None | `vault` | Hot-swap active profile credentials |
+| `switch`| `[<name>]` | `--smart`, `--model`, `--json` | `vault` | Hot-swap active profile credentials, or auto-switch to highest quota with `--smart` |
 | `next` | None | `--reason`, `--cooldown`, `--json` | `vault` | Rotate to next eligible standby account |
 | `quota` | `[name]` | `--json` | `quota` | Inspect live quota and reset countdowns |
 | `refresh`| `[name]` | `--force`, `--json` | `refresh` | Refresh OAuth access tokens |

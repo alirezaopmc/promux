@@ -25,6 +25,7 @@ Operating as a zero-intrusion filesystem overlay, `promux` keeps your active con
   - **Reactive:** Lightweight daemon tails `cli.log` and session logs to detect quota exhaustion events (`Individual quota reached`, `RESOURCE_EXHAUSTED 429`) and reset hints (`Resets in ~Xh Ym`) in real time.
 - **POSIX Concurrency Guarantees:** File locking (`fcntl.flock`) and atomic file replacement (`.tmp` + `os.replace`) prevent race conditions between CLI commands, background daemons, and CLI operations.
 - **LRU Standby Failover:** Intelligently rotates to the least-recently used eligible standby account when the active profile is exhausted, placing exhausted accounts into a temporary cooldown window.
+- **Smart Quota-Aware Switching:** Automated candidate selection via `promux switch --smart` querying live Cloud Code Assist quotas across all standby accounts, ranking by highest available quota (5-hour and weekly buckets), and conditionally applying cooldowns only if the departing profile is exhausted.
 - **Two-Tier Resilient Token Renewal:** Direct native Google OAuth refresh using official Antigravity client credentials with automatic token rotation; seamless headless `agy` fallback under file mutex. Proactively and automatically renews tokens during `promux switch`, `promux quota`, `promux watch`, and `promux refresh`.
 
 ---
@@ -212,6 +213,16 @@ Hot-swap the active token at any time:
 promux switch backup1
 ```
 
+### 6. Smart Quota-Aware Switching
+Automatically evaluate all standby accounts and switch to the profile with the highest remaining quota for Gemini or third-party models (Claude/GPT):
+```bash
+# Auto-switch to standby account with highest Gemini quota
+promux switch --smart
+
+# Auto-switch targeting Claude & GPT quota
+promux switch --smart --model claude
+```
+
 ---
 
 ## CLI Command Reference
@@ -244,12 +255,33 @@ promux save work --email team@company.com
 promux cursor save work
 ```
 
-### `promux switch <name>`
-Hot-swaps the active profile to `<name>` with atomic file replace and `0600` permissions under an advisory lock.
+### `promux switch [<name>] [--smart] [--model {gemini,claude,gpt}]`
+Hot-swaps the active profile credentials with atomic file replacement and `0600` permissions under an advisory lock.
+
+- **Manual switch:** Specify `<name>` to switch directly to that profile.
+- **Smart quota-aware switch:** Pass `--smart` to query live Cloud Code Assist API quotas across all eligible standby profiles and automatically switch to the candidate with the highest remaining quota.
+  - `--model {gemini,claude,gpt}`: Target model tier to evaluate (default: `gemini`). Specifying `claude` or `gpt` evaluates the shared third-party model quota bucket.
+  - **Ranking metric:** Prioritizes highest 5-hour available quota fraction, then weekly quota fraction, with least-recently used (LRU) tie-breaking.
+  - **Conditional cooldown:** Quarantines the departing active profile only if its quota is exhausted; otherwise leaves it clean in `standby`.
 
 ```bash
+# Manual profile switch
 promux switch personal
 promux claude switch work
+
+# Smart switch targeting Gemini quota (default)
+promux switch --smart
+
+# Smart switch targeting Claude / GPT quota
+promux switch --smart --model claude
+
+# JSON output
+promux switch --smart --json
+```
+
+Output:
+```text
+Switched active profile to 'backup1' (gemini 5h: 100.0%, weekly: 95.0%).
 ```
 
 ### `promux next [--reason REASON] [--cooldown COOLDOWN]`
@@ -342,14 +374,14 @@ promux --version         # shorthand
 
 Output:
 ```text
-promux 0.1.0 (Python 3.14.4, Linux-x86_64)
+promux 0.3.0 (Python 3.14.4, Linux-x86_64)
 Supported tools: agy (default), claude, codex, cursor
 ```
 
 JSON output:
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.3.0",
   "python": "3.14.4",
   "platform": "Linux-x86_64",
   "tools": ["agy", "claude", "codex", "cursor"],

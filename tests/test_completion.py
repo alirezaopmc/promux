@@ -37,6 +37,10 @@ def test_generate_bash_completion() -> None:
     for tool in TOOLS:
         assert tool in script
 
+    # Check flags for switch
+    assert "--smart" in script
+    assert "--model" in script
+
     # Syntax check via bash -n if available
     bash_path = shutil.which("bash")
     if bash_path:
@@ -65,3 +69,7 @@ def test_generate_zsh_completion() -> None:
     # All tools included
     for tool in TOOLS:
         assert tool in script
+
+    # Check flags for switch
+    assert "--smart" in script
+    assert "--model" in script

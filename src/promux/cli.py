@@ -448,7 +448,81 @@ def cmd_save(storage: StorageEngine, name: str, email: str | None, json_out: boo
     return 0
 
 
-def cmd_switch(storage: StorageEngine, name: str, json_out: bool) -> int:
+def cmd_switch(
+    storage: StorageEngine,
+    name: str | None,
+    json_out: bool,
+    smart: bool = False,
+    model: str = "gemini",
+    failover: FailoverEngine | None = None,
+) -> int:
+    if smart:
+        if failover is None:
+            failover = FailoverEngine(storage)
+        res = failover.rotate_smart(
+            quota_fetcher=lambda acct: _fetch_account_quota(storage, acct),
+            model=model,
+        )
+        if res.success:
+            if json_out:
+                print(
+                    json.dumps(
+                        {
+                            "success": True,
+                            "from_account": res.from_account,
+                            "to_account": res.to_account,
+                            "model": res.model,
+                            "quota": {
+                                "5h_remaining": res.five_hour_remaining,
+                                "weekly_remaining": res.weekly_remaining,
+                            },
+                            "cooldown_until": (
+                                res.cooldown_until.isoformat() if res.cooldown_until else None
+                            ),
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                five_pct = (
+                    f"{res.five_hour_remaining * 100:.1f}%"
+                    if res.five_hour_remaining is not None
+                    else "-"
+                )
+                wk_pct = (
+                    f"{res.weekly_remaining * 100:.1f}%"
+                    if res.weekly_remaining is not None
+                    else "-"
+                )
+                msg = f"Switched active profile to '{res.to_account}' ({res.model} 5h: {five_pct}, weekly: {wk_pct})."
+                if res.cooldown_until and res.from_account:
+                    msg += f" (Cooldown set for '{res.from_account}' until {res.cooldown_until.strftime('%H:%M UTC')}.)"
+                print(msg)
+            return 0
+        else:
+            if json_out:
+                print(
+                    json.dumps(
+                        {"success": False, "error": res.reason},
+                        indent=2,
+                    )
+                )
+            else:
+                print(f"Error: {res.reason}", file=sys.stderr)
+            return 1
+
+    if not name:
+        if json_out:
+            print(
+                json.dumps(
+                    {"success": False, "error": "must specify account name or pass --smart"},
+                    indent=2,
+                )
+            )
+        else:
+            print("Error: must specify account name or pass --smart", file=sys.stderr)
+        return 2
+
     success = storage.switch_profile(name)
     if success:
         if json_out:
@@ -1142,9 +1216,29 @@ def build_parser() -> argparse.ArgumentParser:
     save_p.add_argument("name", help="Profile name")
     save_p.add_argument("--email", default=None, help="Account email (auto-detected if omitted)")
 
-    # switch
-    switch_p = sub.add_parser("switch", parents=[common_parser], help="Hot-swap to a named profile")
-    switch_p.add_argument("name", help="Profile name to switch to")
+    switch_p = sub.add_parser(
+        "switch",
+        parents=[common_parser],
+        help="Hot-swap to a named profile or auto-switch to best quota",
+    )
+    switch_p.add_argument(
+        "name",
+        nargs="?",
+        default=None,
+        help="Profile name to switch to (optional if --smart is set)",
+    )
+    switch_p.add_argument(
+        "--smart",
+        action="store_true",
+        default=False,
+        help="Automatically switch to the standby account with highest available quota",
+    )
+    switch_p.add_argument(
+        "--model",
+        choices=["gemini", "claude", "gpt"],
+        default="gemini",
+        help="Target model tier to evaluate for --smart (default: gemini)",
+    )
 
     # next
     next_p = sub.add_parser(
@@ -1336,7 +1430,30 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "save":
             return cmd_save(storage, args.name, args.email, json_out)
         elif args.command == "switch":
-            return cmd_switch(storage, args.name, json_out)
+            if args.smart:
+                if "quota" not in target_tool.list_capabilities():
+                    raise RuntimeError(
+                        f"Tool '{target_tool.name}' does not support smart quota switching ('quota' capability required)."
+                    )
+            elif not args.name:
+                if json_out:
+                    print(
+                        json.dumps(
+                            {"success": False, "error": "must specify account name or pass --smart"},
+                            indent=2,
+                        )
+                    )
+                else:
+                    print("Error: must specify account name or pass --smart", file=sys.stderr)
+                return 2
+            return cmd_switch(
+                storage,
+                args.name,
+                json_out,
+                smart=args.smart,
+                model=args.model,
+                failover=failover,
+            )
         elif args.command == "next":
             return cmd_next(failover, args.reason, args.cooldown, json_out)
         elif args.command == "quota":

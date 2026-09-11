@@ -74,7 +74,19 @@ _promux_completion() {
     esac
 
     case "$cmd" in
-        switch|remove|quota)
+        switch)
+            if [[ "$prev_word" == "--model" ]]; then
+                COMPREPLY=( $(compgen -W "gemini claude gpt" -- "$cur") )
+                return 0
+            fi
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--smart --model $common_opts" -- "$cur") )
+            else
+                COMPREPLY=( $(compgen -W "$(_promux_accounts)" -- "$cur") )
+            fi
+            return 0
+            ;;
+        remove|quota)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "$common_opts" -- "$cur") )
             else
@@ -182,7 +194,14 @@ _promux() {
                         _describe 'promux command' subcommands
                     else
                         case $words[2] in
-                            switch|remove|quota)
+                            switch)
+                                _arguments \
+                                    '--smart[Automatically switch to standby account with highest quota]' \
+                                    '--model[Target model tier]:model:(gemini claude gpt)' \
+                                    '--json[Output structured JSON]' \
+                                    '::account:_promux_accounts'
+                                ;;
+                            remove|quota)
                                 _arguments \
                                     '--json[Output structured JSON]' \
                                     '1:account:_promux_accounts'
@@ -217,7 +236,14 @@ _promux() {
                         esac
                     fi
                     ;;
-                switch|remove|quota)
+                switch)
+                    _arguments \
+                        '--smart[Automatically switch to standby account with highest quota]' \
+                        '--model[Target model tier]:model:(gemini claude gpt)' \
+                        '--json[Output structured JSON]' \
+                        '::account:_promux_accounts'
+                    ;;
+                remove|quota)
                     _arguments \
                         '--json[Output structured JSON]' \
                         '1:account:_promux_accounts'
