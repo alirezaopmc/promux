@@ -2011,3 +2011,234 @@ def test_tool_first_dispatch_stub_vault(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr().out
     assert "No accounts" in captured or "ACTIVE" in captured
 
+
+def test_cmd_switch_missing_name_without_smart(capsys):
+    from promux.cli import main
+
+    code = main(["switch"])
+    assert code == 2
+    captured = capsys.readouterr()
+    assert "Error: must specify account name or pass --smart" in captured.err
+
+
+def test_cmd_switch_smart_gemini_success(monkeypatch, tmp_path, capsys):
+    from promux import cli
+    from promux.cli import main
+    from promux.models import AccountMeta, QuotaSummary
+    from promux.storage import StorageEngine
+
+    promux_home = tmp_path / "promux"
+    gemini_home = tmp_path / "gemini"
+    promux_home.mkdir()
+    gemini_home.mkdir()
+    monkeypatch.setenv("PROMUX_HOME", str(promux_home))
+    monkeypatch.setenv("PROMUX_GEMINI_HOME", str(gemini_home))
+
+    storage = StorageEngine(promux_home=promux_home / "tools" / "agy", gemini_home=gemini_home)
+    (storage.accounts_dir / "acc1").mkdir(parents=True)
+    (storage.accounts_dir / "acc1" / "antigravity-oauth-token").write_text('{"access_token":"t1"}')
+    (storage.accounts_dir / "acc2").mkdir(parents=True)
+    (storage.accounts_dir / "acc2" / "antigravity-oauth-token").write_text('{"access_token":"t2"}')
+    storage.save_state({
+        "active": "acc1",
+        "accounts": {
+            "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
+            "acc2": AccountMeta(name="acc2", enabled=True).to_dict(),
+        },
+    })
+    storage.live_token.write_text('{"access_token":"t1"}')
+
+    def mock_fetch(st, name):
+        if name == "acc1":
+            return QuotaSummary(gemini_5h_remaining=0.0, gemini_weekly_remaining=0.5), "p1", None
+        return QuotaSummary(gemini_5h_remaining=0.9, gemini_weekly_remaining=0.85), "p2", None
+
+    monkeypatch.setattr(cli, "_fetch_account_quota", mock_fetch)
+
+    code = main(["switch", "--smart"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Switched active profile to 'acc2'" in captured.out
+    assert "gemini 5h: 90.0%" in captured.out
+    assert "weekly: 85.0%" in captured.out
+
+
+def test_cmd_switch_smart_json_output(monkeypatch, tmp_path, capsys):
+    from promux import cli
+    from promux.cli import main
+    from promux.models import AccountMeta, QuotaSummary
+    from promux.storage import StorageEngine
+
+    promux_home = tmp_path / "promux"
+    gemini_home = tmp_path / "gemini"
+    promux_home.mkdir()
+    gemini_home.mkdir()
+    monkeypatch.setenv("PROMUX_HOME", str(promux_home))
+    monkeypatch.setenv("PROMUX_GEMINI_HOME", str(gemini_home))
+
+    storage = StorageEngine(promux_home=promux_home / "tools" / "agy", gemini_home=gemini_home)
+    (storage.accounts_dir / "acc1").mkdir(parents=True)
+    (storage.accounts_dir / "acc1" / "antigravity-oauth-token").write_text('{"access_token":"t1"}')
+    (storage.accounts_dir / "acc2").mkdir(parents=True)
+    (storage.accounts_dir / "acc2" / "antigravity-oauth-token").write_text('{"access_token":"t2"}')
+    storage.save_state({
+        "active": "acc1",
+        "accounts": {
+            "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
+            "acc2": AccountMeta(name="acc2", enabled=True).to_dict(),
+        },
+    })
+    storage.live_token.write_text('{"access_token":"t1"}')
+
+    def mock_fetch(st, name):
+        if name == "acc1":
+            return QuotaSummary(gemini_5h_remaining=0.0, gemini_weekly_remaining=0.5), "p1", None
+        return QuotaSummary(gemini_5h_remaining=0.9, gemini_weekly_remaining=0.85), "p2", None
+
+    monkeypatch.setattr(cli, "_fetch_account_quota", mock_fetch)
+
+    code = main(["switch", "--smart", "--json"])
+    assert code == 0
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert data["success"] is True
+    assert data["from_account"] == "acc1"
+    assert data["to_account"] == "acc2"
+    assert data["model"] == "gemini"
+    assert data["quota"] == {"5h_remaining": 0.9, "weekly_remaining": 0.85}
+    assert "cooldown_until" in data
+
+
+def test_cmd_switch_smart_unsupported_quota_tool(capsys):
+    from promux.cli import main
+
+    code = main(["claude", "switch", "--smart"])
+    assert code == 1
+    captured = capsys.readouterr()
+    assert (
+        "Tool 'claude' does not support smart quota switching ('quota' capability required)."
+        in captured.err
+    )
+
+
+def test_cmd_switch_smart_no_candidates(monkeypatch, tmp_path, capsys):
+    from promux import cli
+    from promux.cli import main
+    from promux.models import AccountMeta, QuotaSummary
+    from promux.storage import StorageEngine
+
+    promux_home = tmp_path / "promux"
+    gemini_home = tmp_path / "gemini"
+    promux_home.mkdir()
+    gemini_home.mkdir()
+    monkeypatch.setenv("PROMUX_HOME", str(promux_home))
+    monkeypatch.setenv("PROMUX_GEMINI_HOME", str(gemini_home))
+
+    storage = StorageEngine(promux_home=promux_home / "tools" / "agy", gemini_home=gemini_home)
+    (storage.accounts_dir / "acc1").mkdir(parents=True)
+    (storage.accounts_dir / "acc1" / "antigravity-oauth-token").write_text('{"access_token":"t1"}')
+    (storage.accounts_dir / "acc2").mkdir(parents=True)
+    (storage.accounts_dir / "acc2" / "antigravity-oauth-token").write_text('{"access_token":"t2"}')
+    storage.save_state({
+        "active": "acc1",
+        "accounts": {
+            "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
+            "acc2": AccountMeta(name="acc2", enabled=True).to_dict(),
+        },
+    })
+    storage.live_token.write_text('{"access_token":"t1"}')
+
+    def mock_fetch(st, name):
+        return QuotaSummary(gemini_5h_remaining=0.0, gemini_weekly_remaining=0.0), "p", None
+
+    monkeypatch.setattr(cli, "_fetch_account_quota", mock_fetch)
+
+    code = main(["switch", "--smart"])
+    assert code == 1
+    captured = capsys.readouterr()
+    assert (
+        "Error: No standby accounts found with available quota for 'gemini' models"
+        in captured.err
+    )
+
+
+def test_cmd_switch_smart_model_claude(monkeypatch, tmp_path, capsys):
+    from promux import cli
+    from promux.cli import main
+    from promux.models import AccountMeta, QuotaSummary
+    from promux.storage import StorageEngine
+
+    promux_home = tmp_path / "promux"
+    gemini_home = tmp_path / "gemini"
+    promux_home.mkdir()
+    gemini_home.mkdir()
+    monkeypatch.setenv("PROMUX_HOME", str(promux_home))
+    monkeypatch.setenv("PROMUX_GEMINI_HOME", str(gemini_home))
+
+    storage = StorageEngine(promux_home=promux_home / "tools" / "agy", gemini_home=gemini_home)
+    (storage.accounts_dir / "acc1").mkdir(parents=True)
+    (storage.accounts_dir / "acc1" / "antigravity-oauth-token").write_text('{"access_token":"t1"}')
+    (storage.accounts_dir / "acc2").mkdir(parents=True)
+    (storage.accounts_dir / "acc2" / "antigravity-oauth-token").write_text('{"access_token":"t2"}')
+    storage.save_state({
+        "active": "acc1",
+        "accounts": {
+            "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
+            "acc2": AccountMeta(name="acc2", enabled=True).to_dict(),
+        },
+    })
+    storage.live_token.write_text('{"access_token":"t1"}')
+
+    def mock_fetch(st, name):
+        if name == "acc1":
+            return (
+                QuotaSummary(third_party_5h_remaining=0.0, third_party_weekly_remaining=0.5),
+                "p1",
+                None,
+            )
+        return (
+            QuotaSummary(third_party_5h_remaining=0.75, third_party_weekly_remaining=0.8),
+            "p2",
+            None,
+        )
+
+    monkeypatch.setattr(cli, "_fetch_account_quota", mock_fetch)
+
+    code = main(["switch", "--smart", "--model", "claude"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Switched active profile to 'acc2'" in captured.out
+    assert "claude 5h: 75.0%" in captured.out
+
+
+def test_cmd_switch_smart_failure_json(monkeypatch, tmp_path, capsys):
+    from promux.cli import main
+    from promux.models import AccountMeta
+    from promux.storage import StorageEngine
+
+    promux_home = tmp_path / "promux"
+    gemini_home = tmp_path / "gemini"
+    promux_home.mkdir()
+    gemini_home.mkdir()
+    monkeypatch.setenv("PROMUX_HOME", str(promux_home))
+    monkeypatch.setenv("PROMUX_GEMINI_HOME", str(gemini_home))
+
+    storage = StorageEngine(promux_home=promux_home / "tools" / "agy", gemini_home=gemini_home)
+    (storage.accounts_dir / "acc1").mkdir(parents=True)
+    (storage.accounts_dir / "acc1" / "antigravity-oauth-token").write_text('{"access_token":"t1"}')
+    storage.save_state({
+        "active": "acc1",
+        "accounts": {
+            "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
+        },
+    })
+    storage.live_token.write_text('{"access_token":"t1"}')
+
+    code = main(["switch", "--smart", "--json"])
+    assert code == 1
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert data["success"] is False
+    assert "error" in data
+
+

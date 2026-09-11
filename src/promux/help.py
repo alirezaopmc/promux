@@ -45,7 +45,7 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
 # Per-subcommand descriptions (used by print_subcommand_help)
 COMMAND_DETAILS: dict[str, str] = {
     "list": "List all accounts saved in the promux vault.",
-    "switch": "Hot-swap the active profile by copying its token to the live token slot.",
+    "switch": "Hot-swap the active profile, or auto-switch to highest quota with --smart.",
     "save": "Save the current active credentials as a named profile in the vault.",
     "next": "Rotate to the next eligible standby profile in round-robin order.",
     "remove": "Delete a saved profile and its associated token from the vault.",

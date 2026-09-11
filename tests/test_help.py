@@ -28,6 +28,7 @@ def test_cli_help_specific_command(capsys):
     out = capsys.readouterr().out
     assert "switch" in out
     assert "Hot-swap" in out or "profile" in out
+    assert "--smart" in out
 
 
 def test_cli_help_tool_specific(capsys):
