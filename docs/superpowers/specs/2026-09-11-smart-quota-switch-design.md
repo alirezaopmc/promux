@@ -68,16 +68,10 @@ Add or extend rotation models to capture quota metrics:
 
 ```python
 @dataclass
-class SmartRotationResult:
-    success: bool
-    from_account: str | None
-    to_account: str | None
-    model: str
+class SmartRotationResult(RotationResult):
+    model: str = "gemini"
     five_hour_remaining: float | None = None
     weekly_remaining: float | None = None
-    reason: str = "smart"
-    cooldown_until: datetime | None = None
-    error: str | None = None
 ```
 
 ### 3.2 Failover Engine (`src/promux/failover.py`)
@@ -100,21 +94,21 @@ class FailoverEngine:
 2. Identify `active_name`.
 3. Candidate accounts = `get_eligible_standby(exclude=active_name)`.
 4. If no candidate accounts exist:
-   return failure `SmartRotationResult(success=False, from_account=active_name, to_account=None, model=model, error="No eligible standby accounts")`.
+   return failure `SmartRotationResult(success=False, from_account=active_name, to_account=None, model=model, reason="No eligible standby accounts")`.
 5. For each candidate account:
    - Call `quota_fetcher(candidate.name)`.
    - Extract `five_hour` and `weekly` based on `model`.
    - If error or `five_hour <= 0.0` or `weekly <= 0.0`: discard candidate.
    - If valid, record candidate along with its remaining quota.
 6. If no eligible candidates remain after quota check:
-   return failure `SmartRotationResult(success=False, from_account=active_name, to_account=None, model=model, error=f"No standby accounts found with available quota for '{model}' models")`.
+   return failure `SmartRotationResult(success=False, from_account=active_name, to_account=None, model=model, reason=f"No standby accounts found with available quota for '{model}' models")`.
 7. Sort eligible candidates by:
    - `five_hour` descending
    - `weekly` descending
    - `last_used_at` ascending (None first)
 8. Pick `best_candidate = candidates[0]`.
 9. Check active account's quota using `quota_fetcher(active_name)`:
-   - If active account quota is exhausted (`<= 0.0`), apply cooldown until its reset timestamp (or default 60 minutes).
+   - If active account quota is exhausted (`<= 0.0`), parse its reset timestamp string (e.g. `gemini_5h_reset`) into a datetime and apply as `cooldown_until`. If timestamp is missing or unparseable, default to 60 minutes from now.
 10. Execute `storage.switch_profile(best_candidate.name)`.
 11. Update `best_candidate.last_used_at = datetime.now(timezone.utc)`.
 12. Return `SmartRotationResult(success=True, from_account=active_name, to_account=best_candidate.name, model=model, five_hour_remaining=..., weekly_remaining=...)`.
@@ -137,11 +131,11 @@ class FailoverEngine:
        smart: bool,
        model: str,
        json_out: bool,
-       failover: FailoverEngine | None = None,
+       failover: FailoverEngine,
    ) -> int:
    ```
+   - In `main()`, if `--smart` is passed, explicitly verify that `"quota" in target_tool.list_capabilities()`.
    - If `smart` is True:
-     - Check tool capability: if tool does not support quota (e.g. scaffolded tools), fail with descriptive error.
      - Call `failover.rotate_smart(quota_fetcher=lambda acct: _fetch_account_quota(storage, acct), model=model)`.
      - Handle presentation for text and JSON.
    - Else:
