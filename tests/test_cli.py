@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 
 from promux.cli import main
 from promux.models import QuotaSummary
@@ -1955,8 +1957,6 @@ def test_cmd_quota_redesigned_display(storage_with_profiles, monkeypatch, capsys
 
 
 def test_cmd_quota_concurrent_execution_and_order(storage_with_profiles, monkeypatch, capsys):
-    import threading
-    import time
     from promux.cli import cmd_quota
     from promux.models import QuotaSummary
 
@@ -2324,7 +2324,6 @@ def test_cmd_switch_smart_failure_json(monkeypatch, tmp_path, capsys):
 
 
 def test_cli_token_refresh_thread_local():
-    import threading
     from promux.cli import (
         _get_last_refresh_method,
         _set_last_refresh_method,
@@ -2345,32 +2344,34 @@ def test_cli_token_refresh_thread_local():
     assert thread_results["default_method"] == "native"
     assert thread_results["default_revoked"] is False
 
-    # Set state in calling thread
-    _set_last_refresh_method("fallback (agy)")
-    _set_last_refresh_revoked(True)
-    assert _get_last_refresh_method() == "fallback (agy)"
-    assert _get_last_refresh_revoked() is True
+    try:
+        # Set state in calling thread
+        _set_last_refresh_method("fallback (agy)")
+        _set_last_refresh_revoked(True)
+        assert _get_last_refresh_method() == "fallback (agy)"
+        assert _get_last_refresh_revoked() is True
 
-    def worker_mutate():
-        # Worker thread should have independent default values
-        thread_results["worker_initial_method"] = _get_last_refresh_method()
-        thread_results["worker_initial_revoked"] = _get_last_refresh_revoked()
-        _set_last_refresh_method("failed")
+        def worker_mutate():
+            # Worker thread should have independent default values
+            thread_results["worker_initial_method"] = _get_last_refresh_method()
+            thread_results["worker_initial_revoked"] = _get_last_refresh_revoked()
+            _set_last_refresh_method("failed")
+            _set_last_refresh_revoked(False)
+            thread_results["worker_updated_method"] = _get_last_refresh_method()
+            thread_results["worker_updated_revoked"] = _get_last_refresh_revoked()
+
+        t2 = threading.Thread(target=worker_mutate)
+        t2.start()
+        t2.join()
+
+        assert thread_results["worker_initial_method"] == "native"
+        assert thread_results["worker_initial_revoked"] is False
+        assert thread_results["worker_updated_method"] == "failed"
+        assert thread_results["worker_updated_revoked"] is False
+
+        # Calling thread should be untouched by worker mutations
+        assert _get_last_refresh_method() == "fallback (agy)"
+        assert _get_last_refresh_revoked() is True
+    finally:
+        _set_last_refresh_method("native")
         _set_last_refresh_revoked(False)
-        thread_results["worker_updated_method"] = _get_last_refresh_method()
-        thread_results["worker_updated_revoked"] = _get_last_refresh_revoked()
-
-    t2 = threading.Thread(target=worker_mutate)
-    t2.start()
-    t2.join()
-
-    assert thread_results["worker_initial_method"] == "native"
-    assert thread_results["worker_initial_revoked"] is False
-    assert thread_results["worker_updated_method"] == "failed"
-    assert thread_results["worker_updated_revoked"] is False
-
-    # Calling thread should be untouched by worker mutations
-    assert _get_last_refresh_method() == "fallback (agy)"
-    assert _get_last_refresh_revoked() is True
-
-

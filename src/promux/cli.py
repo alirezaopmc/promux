@@ -824,11 +824,7 @@ def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
 
     max_workers = min(10, max(1, len(accounts)))
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(fetch_for_account, acct) for acct in accounts]
-
-        for future in futures:  # Preserves correct vault order
-            acct_name, is_active, qs, project_id, err = future.result()
-
+        for acct_name, is_active, qs, project_id, err in executor.map(fetch_for_account, accounts):
             if json_out:
                 record: dict[str, Any] = {
                     "account": acct_name,

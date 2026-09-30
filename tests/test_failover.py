@@ -1,8 +1,10 @@
+import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from promux.failover import FailoverEngine
-from promux.models import AccountMeta, AccountState
+from promux.models import AccountMeta, AccountState, QuotaSummary
 
 
 class FakeStorage:
@@ -612,10 +614,6 @@ def test_parse_iso_reset_minutes():
 
 
 def test_rotate_smart_concurrent_candidate_evaluation():
-    import threading
-    import time
-    from promux.models import QuotaSummary
-
     storage = FakeStorage()
     now = datetime.now(timezone.utc)
     storage.state["active"] = "acc_active"

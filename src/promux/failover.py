@@ -175,10 +175,7 @@ class FailoverEngine:
 
             max_workers = min(10, max(1, len(eligible)))
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(fetch_candidate, c) for c in eligible]
-
-                for future in futures:
-                    candidate, qs = future.result()
+                for candidate, qs in executor.map(fetch_candidate, eligible):
                     if qs is None:
                         continue
 

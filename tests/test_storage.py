@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 
 import pytest
 
@@ -431,8 +433,6 @@ def test_switch_profile_fallback_agy_renewal(tmp_path, sample_token_dict, monkey
 
 
 def test_storage_tx_state_thread_local(tmp_path):
-    import threading
-
     promux_home = tmp_path / ".promux"
     gemini_home = tmp_path / ".gemini"
     storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
@@ -471,9 +471,6 @@ def test_storage_tx_state_thread_local(tmp_path):
 
 
 def test_storage_concurrent_transactions(tmp_path):
-    import threading
-    import time
-
     promux_home = tmp_path / ".promux"
     gemini_home = tmp_path / ".gemini"
     storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
@@ -499,6 +496,3 @@ def test_storage_concurrent_transactions(tmp_path):
     loaded = storage.load_state()
     for i in range(5):
         assert f"worker_{i}" in loaded["accounts"]
-
-
-
