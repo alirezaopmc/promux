@@ -698,10 +698,9 @@ def _fetch_account_quota(
             meta = client.load_metadata()
             project_id = meta.get("project_id")
             if project_id:
-                state = storage.load_state()
-                if target_name in state.get("accounts", {}):
-                    state["accounts"][target_name]["project_id"] = project_id
-                    storage.save_state(state)
+                with storage.transaction() as state:
+                    if target_name in state.get("accounts", {}):
+                        state["accounts"][target_name]["project_id"] = project_id
         except Exception as e:
             if _get_last_refresh_revoked():
                 return (

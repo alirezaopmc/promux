@@ -635,6 +635,47 @@ def test_fetch_account_quota_success(tmp_path, sample_token_dict, monkeypatch):
     assert qs.gemini_5h_remaining == 0.95
 
 
+def test_fetch_account_quota_caches_project_id_transactionally(tmp_path, sample_token_dict, monkeypatch):
+    from contextlib import contextmanager
+
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import _fetch_account_quota, get_storage, main
+    from promux.quota import QuotaClient
+
+    main(["save", "testacc", "--email", "test@test.com"])
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda self: {"project_id": "proj-tx-123"})
+    monkeypatch.setattr(
+        QuotaClient,
+        "get_quota",
+        lambda self, pid: QuotaSummary(
+            gemini_5h_remaining=0.95,
+            gemini_weekly_remaining=0.80,
+            third_party_5h_remaining=1.0,
+            third_party_weekly_remaining=0.40,
+            gemini_5h_reset="2026-09-06T18:00:00Z",
+        ),
+    )
+
+    storage = get_storage()
+    tx_called = []
+    orig_tx = storage.transaction
+
+    @contextmanager
+    def spy_transaction():
+        tx_called.append(True)
+        with orig_tx() as s:
+            yield s
+
+    monkeypatch.setattr(storage, "transaction", spy_transaction)
+
+    qs, pid, err = _fetch_account_quota(storage, "testacc")
+    assert err is None
+    assert pid == "proj-tx-123"
+    assert len(tx_called) == 1
+    assert storage.load_state()["accounts"]["testacc"]["project_id"] == "proj-tx-123"
+
+
 def test_fetch_account_quota_nonexistent(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     from promux.cli import _fetch_account_quota, get_storage
