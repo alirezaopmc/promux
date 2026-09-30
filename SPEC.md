@@ -3,7 +3,7 @@
 
 > **Package Name:** `promux`  
 > **Directory:** `~/Dev/promux`  
-> **Version:** 0.3.0  
+> **Version:** 0.3.1  
 > **Date:** 2026-09-11  
 > **Author:** Alireza Opmc  
 

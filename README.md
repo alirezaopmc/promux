@@ -381,7 +381,7 @@ Supported tools: agy (default), claude, codex, cursor
 JSON output:
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.3.1",
   "python": "3.14.4",
   "platform": "Linux-x86_64",
   "tools": ["agy", "claude", "codex", "cursor"],
