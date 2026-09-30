@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import urllib.parse
 import urllib.request
 from contextlib import nullcontext
@@ -170,7 +171,6 @@ def _is_token_expired(
 
 def _refresh_token_native(token_path: Path, token_data: dict[str, Any]) -> str | None:
     """Tier 1: Execute direct HTTP OAuth refresh using Google OAuth token endpoint."""
-    global _last_refresh_revoked
     if not isinstance(token_data, dict):
         return None
     tok = token_data.get("token")
@@ -213,13 +213,13 @@ def _refresh_token_native(token_path: Path, token_data: dict[str, Any]) -> str |
         try:
             body = json.loads(e.read().decode("utf-8"))
             if isinstance(body, dict) and body.get("error") == "invalid_grant":
-                _last_refresh_revoked = True
+                _set_last_refresh_revoked(True)
         except Exception:
             if "invalid_grant" in str(e).lower():
-                _last_refresh_revoked = True
+                _set_last_refresh_revoked(True)
     except Exception as e:
         if "invalid_grant" in str(e).lower():
-            _last_refresh_revoked = True
+            _set_last_refresh_revoked(True)
     return None
 
 
@@ -305,8 +305,23 @@ def _refresh_token_fallback_agy(token_path: Path, storage: StorageEngine) -> str
         return None
 
 
-_last_refresh_method: str = "native"
-_last_refresh_revoked: bool = False
+_cli_local = threading.local()
+
+
+def _get_last_refresh_method() -> str:
+    return getattr(_cli_local, "last_refresh_method", "native")
+
+
+def _set_last_refresh_method(val: str) -> None:
+    _cli_local.last_refresh_method = val
+
+
+def _get_last_refresh_revoked() -> bool:
+    return getattr(_cli_local, "last_refresh_revoked", False)
+
+
+def _set_last_refresh_revoked(val: bool) -> None:
+    _cli_local.last_refresh_revoked = val
 
 
 def _refresh_token_file(
@@ -315,29 +330,28 @@ def _refresh_token_file(
     storage: StorageEngine | None = None,
 ) -> str | None:
     """Attempt to refresh an expired token using its refresh_token or agy fallback."""
-    global _last_refresh_method, _last_refresh_revoked
-    _last_refresh_method = "failed"
-    _last_refresh_revoked = False
+    _set_last_refresh_method("failed")
+    _set_last_refresh_revoked(False)
     # Tier 1: Native HTTP refresh
     try:
         refreshed = _refresh_token_native(token_path, token_data)
     except Exception as e:
         if "invalid_grant" in str(e).lower():
-            _last_refresh_revoked = True
+            _set_last_refresh_revoked(True)
         refreshed = None
 
     if refreshed:
-        _last_refresh_method = "native"
-        _last_refresh_revoked = False
+        _set_last_refresh_method("native")
+        _set_last_refresh_revoked(False)
         return refreshed
-    if _last_refresh_revoked:
-        _last_refresh_method = "revoked"
+    if _get_last_refresh_revoked():
+        _set_last_refresh_method("revoked")
         return None
     # Tier 2: Headless agy fallback
     if storage is not None:
         refreshed = _refresh_token_fallback_agy(token_path, storage)
         if refreshed:
-            _last_refresh_method = "fallback (agy)"
+            _set_last_refresh_method("fallback (agy)")
             return refreshed
     return None
 
@@ -628,8 +642,7 @@ def _fetch_account_quota(
     Returns:
         tuple of (QuotaSummary or None, project_id or None, error_message or None)
     """
-    global _last_refresh_revoked
-    _last_refresh_revoked = False
+    _set_last_refresh_revoked(False)
 
     acct = storage.get_account(target_name)
     if not acct:
@@ -669,7 +682,7 @@ def _fetch_account_quota(
         access_token = new_acc or orig_acc
 
     if not access_token:
-        if _last_refresh_revoked:
+        if _get_last_refresh_revoked():
             return (
                 None,
                 None,
@@ -690,7 +703,7 @@ def _fetch_account_quota(
                     state["accounts"][target_name]["project_id"] = project_id
                     storage.save_state(state)
         except Exception as e:
-            if _last_refresh_revoked:
+            if _get_last_refresh_revoked():
                 return (
                     None,
                     None,
@@ -725,7 +738,7 @@ def _fetch_account_quota(
                 except Exception as retry_e:
                     return None, project_id, f"Error retrieving quota: {retry_e}"
             else:
-                if _last_refresh_revoked:
+                if _get_last_refresh_revoked():
                     return (
                         None,
                         project_id,
@@ -939,13 +952,13 @@ def _refresh_account_token(
             except Exception:
                 pass
         method = (
-            _last_refresh_method
-            if _last_refresh_method in ("native", "fallback (agy)")
+            _get_last_refresh_method()
+            if _get_last_refresh_method() in ("native", "fallback (agy)")
             else "native"
         )
         return True, f"Token refreshed successfully ({method})."
     else:
-        return False, f"Failed to refresh token ({_last_refresh_method})."
+        return False, f"Failed to refresh token ({_get_last_refresh_method()})."
 
 
 def cmd_refresh(
@@ -1030,8 +1043,8 @@ def cmd_refresh(
             refreshed = _refresh_token_file(token_path, token_data, storage=storage)
             if refreshed:
                 method = (
-                    _last_refresh_method
-                    if _last_refresh_method in ("native", "fallback (agy)")
+                    _get_last_refresh_method()
+                    if _get_last_refresh_method() in ("native", "fallback (agy)")
                     else "native"
                 )
                 new_data = _read_token_data(token_path)
