@@ -1954,6 +1954,46 @@ def test_cmd_quota_redesigned_display(storage_with_profiles, monkeypatch, capsys
     assert "weekly_reset_relative" in detail_data["third_party"]
 
 
+def test_cmd_quota_concurrent_execution_and_order(storage_with_profiles, monkeypatch, capsys):
+    import threading
+    import time
+    from promux.cli import cmd_quota
+    from promux.models import QuotaSummary
+
+    storage_with_profiles.save_profile("staging", email="staging@company.com", project_id="proj-staging")
+
+    mock_qs = QuotaSummary(
+        gemini_5h_remaining=0.98,
+        gemini_weekly_remaining=0.85,
+        third_party_5h_remaining=1.0,
+        third_party_weekly_remaining=0.925,
+    )
+
+    calling_threads = set()
+
+    def mock_fetch(storage, name):
+        calling_threads.add(threading.current_thread().ident)
+        # Delay one account so finishes happen out of original order
+        if name == "personal":
+            time.sleep(0.05)
+        return mock_qs, f"proj-{name}", None
+
+    monkeypatch.setattr("promux.cli._fetch_account_quota", mock_fetch)
+
+    ret = cmd_quota(storage_with_profiles, name=None, json_out=True)
+    assert ret == 0
+    captured = capsys.readouterr().out
+    data = json.loads(captured)
+
+    # Concurrency verification: fetching executed across multiple worker threads
+    assert len(calling_threads) > 1
+
+    # Order preservation verification: output order matches storage.list_accounts() exactly
+    expected_order = [acct.name for acct in storage_with_profiles.list_accounts()]
+    actual_order = [item["account"] for item in data]
+    assert actual_order == expected_order
+
+
 def test_tools_command(capsys):
     ret = main(["tools"])
     assert ret == 0

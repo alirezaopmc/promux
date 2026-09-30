@@ -1,4 +1,5 @@
 import argparse
+import concurrent.futures
 import json
 import os
 import shutil
@@ -815,50 +816,58 @@ def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
     json_records = []
     text_rows = []
 
-    for acct_meta in accounts:
+    def fetch_for_account(acct_meta):
         acct_name = acct_meta.name
         is_active = acct_name == active_profile
         qs, project_id, err = _fetch_account_quota(storage, acct_name)
+        return acct_name, is_active, qs, project_id, err
 
-        if json_out:
-            record: dict[str, Any] = {
-                "account": acct_name,
-                "active": is_active,
-                "project_id": project_id,
-            }
-            if qs:
-                record["gemini"] = {
-                    "5h_remaining": qs.gemini_5h_remaining,
-                    "5h_reset": qs.gemini_5h_reset,
-                    "5h_reset_relative": format_relative_countdown(qs.gemini_5h_reset),
-                    "weekly_remaining": qs.gemini_weekly_remaining,
-                    "weekly_reset": qs.gemini_weekly_reset,
-                    "weekly_reset_relative": format_relative_countdown(qs.gemini_weekly_reset),
+    max_workers = min(10, max(1, len(accounts)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(fetch_for_account, acct) for acct in accounts]
+
+        for future in futures:  # Preserves correct vault order
+            acct_name, is_active, qs, project_id, err = future.result()
+
+            if json_out:
+                record: dict[str, Any] = {
+                    "account": acct_name,
+                    "active": is_active,
+                    "project_id": project_id,
                 }
-                record["third_party"] = {
-                    "5h_remaining": qs.third_party_5h_remaining,
-                    "5h_reset": qs.third_party_5h_reset,
-                    "5h_reset_relative": format_relative_countdown(qs.third_party_5h_reset),
-                    "weekly_remaining": qs.third_party_weekly_remaining,
-                    "weekly_reset": qs.third_party_weekly_reset,
-                    "weekly_reset_relative": format_relative_countdown(qs.third_party_weekly_reset),
-                }
+                if qs:
+                    record["gemini"] = {
+                        "5h_remaining": qs.gemini_5h_remaining,
+                        "5h_reset": qs.gemini_5h_reset,
+                        "5h_reset_relative": format_relative_countdown(qs.gemini_5h_reset),
+                        "weekly_remaining": qs.gemini_weekly_remaining,
+                        "weekly_reset": qs.gemini_weekly_reset,
+                        "weekly_reset_relative": format_relative_countdown(qs.gemini_weekly_reset),
+                    }
+                    record["third_party"] = {
+                        "5h_remaining": qs.third_party_5h_remaining,
+                        "5h_reset": qs.third_party_5h_reset,
+                        "5h_reset_relative": format_relative_countdown(qs.third_party_5h_reset),
+                        "weekly_remaining": qs.third_party_weekly_remaining,
+                        "weekly_reset": qs.third_party_weekly_reset,
+                        "weekly_reset_relative": format_relative_countdown(qs.third_party_weekly_reset),
+                    }
+                else:
+                    record["error"] = err
+                json_records.append(record)
             else:
-                record["error"] = err
-            json_records.append(record)
-        else:
-            active_mark = "*" if is_active else ""
-            if qs:
-                g5 = format_quota_cell(qs.gemini_5h_remaining, qs.gemini_5h_reset)
-                gw = format_quota_cell(qs.gemini_weekly_remaining, qs.gemini_weekly_reset)
-                c5 = format_quota_cell(qs.third_party_5h_remaining, qs.third_party_5h_reset)
-                cw = format_quota_cell(qs.third_party_weekly_remaining, qs.third_party_weekly_reset)
-            else:
-                g5 = "[AUTH ERROR]" if "401" in str(err) else "[ERROR]"
-                gw = "-"
-                c5 = "-"
-                cw = "-"
-            text_rows.append((active_mark, acct_name, g5, gw, c5, cw))
+                active_mark = "*" if is_active else ""
+                if qs:
+                    g5 = format_quota_cell(qs.gemini_5h_remaining, qs.gemini_5h_reset)
+                    gw = format_quota_cell(qs.gemini_weekly_remaining, qs.gemini_weekly_reset)
+                    c5 = format_quota_cell(qs.third_party_5h_remaining, qs.third_party_5h_reset)
+                    cw = format_quota_cell(qs.third_party_weekly_remaining, qs.third_party_weekly_reset)
+                else:
+                    g5 = "[AUTH ERROR]" if err and "401" in str(err) else "[ERROR]"
+                    gw = "-"
+                    c5 = "-"
+                    cw = "-"
+                text_rows.append((active_mark, acct_name, g5, gw, c5, cw))
 
     if json_out:
         print(json.dumps(json_records, indent=2))
