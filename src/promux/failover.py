@@ -1,3 +1,4 @@
+import concurrent.futures
 import math
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -164,30 +165,38 @@ class FailoverEngine:
                 )
 
             scored_candidates: list[tuple[AccountMeta, float, float, str | None]] = []
-            for candidate in eligible:
+
+            def fetch_candidate(candidate: AccountMeta) -> tuple[AccountMeta, QuotaSummary | None]:
                 try:
                     qs, _, _ = quota_fetcher(candidate.name)
+                    return candidate, qs
                 except Exception:
-                    qs = None
+                    return candidate, None
 
-                if qs is None:
-                    continue
+            max_workers = min(10, max(1, len(eligible)))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [executor.submit(fetch_candidate, c) for c in eligible]
 
-                if model.lower() == "gemini":
-                    five_hour = qs.gemini_5h_remaining
-                    weekly = qs.gemini_weekly_remaining
-                    reset_time = qs.gemini_5h_reset
-                else:
-                    five_hour = qs.third_party_5h_remaining
-                    weekly = qs.third_party_weekly_remaining
-                    reset_time = qs.third_party_5h_reset
+                for future in futures:
+                    candidate, qs = future.result()
+                    if qs is None:
+                        continue
 
-                if five_hour is None or weekly is None:
-                    continue
-                if five_hour <= 0.0 or weekly <= 0.0:
-                    continue
+                    if model.lower() == "gemini":
+                        five_hour = qs.gemini_5h_remaining
+                        weekly = qs.gemini_weekly_remaining
+                        reset_time = qs.gemini_5h_reset
+                    else:
+                        five_hour = qs.third_party_5h_remaining
+                        weekly = qs.third_party_weekly_remaining
+                        reset_time = qs.third_party_5h_reset
 
-                scored_candidates.append((candidate, five_hour, weekly, reset_time))
+                    if five_hour is None or weekly is None:
+                        continue
+                    if five_hour <= 0.0 or weekly <= 0.0:
+                        continue
+
+                    scored_candidates.append((candidate, five_hour, weekly, reset_time))
 
             if not scored_candidates:
                 return SmartRotationResult(
