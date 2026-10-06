@@ -471,12 +471,23 @@ def cmd_switch(
     smart: bool = False,
     model: str = "gemini",
     failover: FailoverEngine | None = None,
+    no_cache: bool = False,
 ) -> int:
     if smart:
         if failover is None:
             failover = FailoverEngine(storage)
+        cache = QuotaCache(storage.home)
+
+        def _fetch_wrapper(acct: str) -> tuple[QuotaSummary | None, str | None, str | None]:
+            try:
+                res = _fetch_account_quota(storage, acct, no_cache=no_cache, cache=cache)
+                return res[0], res[1], res[2]
+            except TypeError:
+                res = _fetch_account_quota(storage, acct)
+                return res[0], res[1], res[2]
+
         res = failover.rotate_smart(
-            quota_fetcher=lambda acct: _fetch_account_quota(storage, acct)[:3],
+            quota_fetcher=_fetch_wrapper,
             model=model,
         )
         if res.success:
@@ -1303,6 +1314,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="gemini",
         help="Target model tier to evaluate for --smart (default: gemini)",
     )
+    switch_p.add_argument(
+        "--no-cache",
+        action="store_true",
+        default=False,
+        help="Bypass quota cache when evaluating candidates for smart switching",
+    )
 
     # next
     next_p = sub.add_parser(
@@ -1523,6 +1540,7 @@ def main(argv: list[str] | None = None) -> int:
                 smart=args.smart,
                 model=args.model,
                 failover=failover,
+                no_cache=getattr(args, "no_cache", False),
             )
         elif args.command == "next":
             return cmd_next(failover, args.reason, args.cooldown, json_out)

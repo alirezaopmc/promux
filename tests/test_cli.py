@@ -2586,3 +2586,40 @@ def test_quota_cache_invalidation_on_401(tmp_path, sample_token_dict, monkeypatc
     # Cache must now be invalidated!
     assert cache.get("acc1") is None
 
+
+def test_cmd_switch_smart_no_cache_flag(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main, get_storage
+    from promux.models import QuotaSummary
+
+    main(["save", "acc1", "--email", "1@test.com"])
+    main(["save", "acc2", "--email", "2@test.com"])
+    main(["switch", "acc1"])
+
+    calls: list[dict[str, Any]] = []
+
+    def mock_fetch(st, acct, no_cache=False, cache=None):
+        calls.append({"acct": acct, "no_cache": no_cache, "cache": cache})
+        if acct == "acc2":
+            return QuotaSummary(gemini_5h_remaining=0.9, gemini_weekly_remaining=0.9), "p2", None, False
+        return QuotaSummary(gemini_5h_remaining=0.1, gemini_weekly_remaining=0.1), "p1", None, False
+
+    monkeypatch.setattr("promux.cli._fetch_account_quota", mock_fetch)
+
+    # 1. Without --no-cache
+    ret = main(["switch", "--smart"])
+    assert ret == 0
+    assert any(c["acct"] == "acc2" and c["no_cache"] is False for c in calls)
+    capsys.readouterr()
+
+    # Reset calls and switch back to acc1
+    calls.clear()
+    main(["switch", "acc1"])
+    capsys.readouterr()
+
+    # 2. With --no-cache
+    ret2 = main(["switch", "--smart", "--no-cache"])
+    assert ret2 == 0
+    assert any(c["acct"] == "acc2" and c["no_cache"] is True for c in calls)
+
+
