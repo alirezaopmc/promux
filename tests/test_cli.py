@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 
 from promux.cli import main
 from promux.models import QuotaSummary
@@ -633,6 +635,47 @@ def test_fetch_account_quota_success(tmp_path, sample_token_dict, monkeypatch):
     assert pid == "proj-123"
     assert qs is not None
     assert qs.gemini_5h_remaining == 0.95
+
+
+def test_fetch_account_quota_caches_project_id_transactionally(tmp_path, sample_token_dict, monkeypatch):
+    from contextlib import contextmanager
+
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import _fetch_account_quota, get_storage, main
+    from promux.quota import QuotaClient
+
+    main(["save", "testacc", "--email", "test@test.com"])
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda self: {"project_id": "proj-tx-123"})
+    monkeypatch.setattr(
+        QuotaClient,
+        "get_quota",
+        lambda self, pid: QuotaSummary(
+            gemini_5h_remaining=0.95,
+            gemini_weekly_remaining=0.80,
+            third_party_5h_remaining=1.0,
+            third_party_weekly_remaining=0.40,
+            gemini_5h_reset="2026-09-06T18:00:00Z",
+        ),
+    )
+
+    storage = get_storage()
+    tx_called = []
+    orig_tx = storage.transaction
+
+    @contextmanager
+    def spy_transaction():
+        tx_called.append(True)
+        with orig_tx() as s:
+            yield s
+
+    monkeypatch.setattr(storage, "transaction", spy_transaction)
+
+    qs, pid, err = _fetch_account_quota(storage, "testacc")
+    assert err is None
+    assert pid == "proj-tx-123"
+    assert len(tx_called) == 1
+    assert storage.load_state()["accounts"]["testacc"]["project_id"] == "proj-tx-123"
 
 
 def test_fetch_account_quota_nonexistent(tmp_path, monkeypatch):
@@ -1913,6 +1956,44 @@ def test_cmd_quota_redesigned_display(storage_with_profiles, monkeypatch, capsys
     assert "weekly_reset_relative" in detail_data["third_party"]
 
 
+def test_cmd_quota_concurrent_execution_and_order(storage_with_profiles, monkeypatch, capsys):
+    from promux.cli import cmd_quota
+    from promux.models import QuotaSummary
+
+    storage_with_profiles.save_profile("staging", email="staging@company.com", project_id="proj-staging")
+
+    mock_qs = QuotaSummary(
+        gemini_5h_remaining=0.98,
+        gemini_weekly_remaining=0.85,
+        third_party_5h_remaining=1.0,
+        third_party_weekly_remaining=0.925,
+    )
+
+    calling_threads = set()
+
+    def mock_fetch(storage, name):
+        calling_threads.add(threading.current_thread().ident)
+        # Delay one account so finishes happen out of original order
+        if name == "personal":
+            time.sleep(0.05)
+        return mock_qs, f"proj-{name}", None
+
+    monkeypatch.setattr("promux.cli._fetch_account_quota", mock_fetch)
+
+    ret = cmd_quota(storage_with_profiles, name=None, json_out=True)
+    assert ret == 0
+    captured = capsys.readouterr().out
+    data = json.loads(captured)
+
+    # Concurrency verification: fetching executed across multiple worker threads
+    assert len(calling_threads) > 1
+
+    # Order preservation verification: output order matches storage.list_accounts() exactly
+    expected_order = [acct.name for acct in storage_with_profiles.list_accounts()]
+    actual_order = [item["account"] for item in data]
+    assert actual_order == expected_order
+
+
 def test_tools_command(capsys):
     ret = main(["tools"])
     assert ret == 0
@@ -2242,3 +2323,55 @@ def test_cmd_switch_smart_failure_json(monkeypatch, tmp_path, capsys):
     assert "error" in data
 
 
+def test_cli_token_refresh_thread_local():
+    from promux.cli import (
+        _get_last_refresh_method,
+        _set_last_refresh_method,
+        _get_last_refresh_revoked,
+        _set_last_refresh_revoked,
+    )
+
+    thread_results = {}
+
+    def worker_default():
+        thread_results["default_method"] = _get_last_refresh_method()
+        thread_results["default_revoked"] = _get_last_refresh_revoked()
+
+    t1 = threading.Thread(target=worker_default)
+    t1.start()
+    t1.join()
+
+    assert thread_results["default_method"] == "native"
+    assert thread_results["default_revoked"] is False
+
+    try:
+        # Set state in calling thread
+        _set_last_refresh_method("fallback (agy)")
+        _set_last_refresh_revoked(True)
+        assert _get_last_refresh_method() == "fallback (agy)"
+        assert _get_last_refresh_revoked() is True
+
+        def worker_mutate():
+            # Worker thread should have independent default values
+            thread_results["worker_initial_method"] = _get_last_refresh_method()
+            thread_results["worker_initial_revoked"] = _get_last_refresh_revoked()
+            _set_last_refresh_method("failed")
+            _set_last_refresh_revoked(False)
+            thread_results["worker_updated_method"] = _get_last_refresh_method()
+            thread_results["worker_updated_revoked"] = _get_last_refresh_revoked()
+
+        t2 = threading.Thread(target=worker_mutate)
+        t2.start()
+        t2.join()
+
+        assert thread_results["worker_initial_method"] == "native"
+        assert thread_results["worker_initial_revoked"] is False
+        assert thread_results["worker_updated_method"] == "failed"
+        assert thread_results["worker_updated_revoked"] is False
+
+        # Calling thread should be untouched by worker mutations
+        assert _get_last_refresh_method() == "fallback (agy)"
+        assert _get_last_refresh_revoked() is True
+    finally:
+        _set_last_refresh_method("native")
+        _set_last_refresh_revoked(False)

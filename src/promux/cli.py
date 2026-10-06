@@ -1,9 +1,11 @@
 import argparse
+import concurrent.futures
 import json
 import os
 import shutil
 import subprocess
 import sys
+import threading
 import urllib.parse
 import urllib.request
 from contextlib import nullcontext
@@ -170,7 +172,6 @@ def _is_token_expired(
 
 def _refresh_token_native(token_path: Path, token_data: dict[str, Any]) -> str | None:
     """Tier 1: Execute direct HTTP OAuth refresh using Google OAuth token endpoint."""
-    global _last_refresh_revoked
     if not isinstance(token_data, dict):
         return None
     tok = token_data.get("token")
@@ -213,13 +214,13 @@ def _refresh_token_native(token_path: Path, token_data: dict[str, Any]) -> str |
         try:
             body = json.loads(e.read().decode("utf-8"))
             if isinstance(body, dict) and body.get("error") == "invalid_grant":
-                _last_refresh_revoked = True
+                _set_last_refresh_revoked(True)
         except Exception:
             if "invalid_grant" in str(e).lower():
-                _last_refresh_revoked = True
+                _set_last_refresh_revoked(True)
     except Exception as e:
         if "invalid_grant" in str(e).lower():
-            _last_refresh_revoked = True
+            _set_last_refresh_revoked(True)
     return None
 
 
@@ -305,8 +306,23 @@ def _refresh_token_fallback_agy(token_path: Path, storage: StorageEngine) -> str
         return None
 
 
-_last_refresh_method: str = "native"
-_last_refresh_revoked: bool = False
+_cli_local = threading.local()
+
+
+def _get_last_refresh_method() -> str:
+    return getattr(_cli_local, "last_refresh_method", "native")
+
+
+def _set_last_refresh_method(val: str) -> None:
+    _cli_local.last_refresh_method = val
+
+
+def _get_last_refresh_revoked() -> bool:
+    return getattr(_cli_local, "last_refresh_revoked", False)
+
+
+def _set_last_refresh_revoked(val: bool) -> None:
+    _cli_local.last_refresh_revoked = val
 
 
 def _refresh_token_file(
@@ -315,29 +331,28 @@ def _refresh_token_file(
     storage: StorageEngine | None = None,
 ) -> str | None:
     """Attempt to refresh an expired token using its refresh_token or agy fallback."""
-    global _last_refresh_method, _last_refresh_revoked
-    _last_refresh_method = "failed"
-    _last_refresh_revoked = False
+    _set_last_refresh_method("failed")
+    _set_last_refresh_revoked(False)
     # Tier 1: Native HTTP refresh
     try:
         refreshed = _refresh_token_native(token_path, token_data)
     except Exception as e:
         if "invalid_grant" in str(e).lower():
-            _last_refresh_revoked = True
+            _set_last_refresh_revoked(True)
         refreshed = None
 
     if refreshed:
-        _last_refresh_method = "native"
-        _last_refresh_revoked = False
+        _set_last_refresh_method("native")
+        _set_last_refresh_revoked(False)
         return refreshed
-    if _last_refresh_revoked:
-        _last_refresh_method = "revoked"
+    if _get_last_refresh_revoked():
+        _set_last_refresh_method("revoked")
         return None
     # Tier 2: Headless agy fallback
     if storage is not None:
         refreshed = _refresh_token_fallback_agy(token_path, storage)
         if refreshed:
-            _last_refresh_method = "fallback (agy)"
+            _set_last_refresh_method("fallback (agy)")
             return refreshed
     return None
 
@@ -628,8 +643,7 @@ def _fetch_account_quota(
     Returns:
         tuple of (QuotaSummary or None, project_id or None, error_message or None)
     """
-    global _last_refresh_revoked
-    _last_refresh_revoked = False
+    _set_last_refresh_revoked(False)
 
     acct = storage.get_account(target_name)
     if not acct:
@@ -669,7 +683,7 @@ def _fetch_account_quota(
         access_token = new_acc or orig_acc
 
     if not access_token:
-        if _last_refresh_revoked:
+        if _get_last_refresh_revoked():
             return (
                 None,
                 None,
@@ -685,12 +699,11 @@ def _fetch_account_quota(
             meta = client.load_metadata()
             project_id = meta.get("project_id")
             if project_id:
-                state = storage.load_state()
-                if target_name in state.get("accounts", {}):
-                    state["accounts"][target_name]["project_id"] = project_id
-                    storage.save_state(state)
+                with storage.transaction() as state:
+                    if target_name in state.get("accounts", {}):
+                        state["accounts"][target_name]["project_id"] = project_id
         except Exception as e:
-            if _last_refresh_revoked:
+            if _get_last_refresh_revoked():
                 return (
                     None,
                     None,
@@ -725,7 +738,7 @@ def _fetch_account_quota(
                 except Exception as retry_e:
                     return None, project_id, f"Error retrieving quota: {retry_e}"
             else:
-                if _last_refresh_revoked:
+                if _get_last_refresh_revoked():
                     return (
                         None,
                         project_id,
@@ -803,50 +816,56 @@ def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
     json_records = []
     text_rows = []
 
-    for acct_meta in accounts:
+    def fetch_for_account(
+        acct_meta: AccountMeta,
+    ) -> tuple[str, bool, QuotaSummary | None, str | None, str | None]:
         acct_name = acct_meta.name
         is_active = acct_name == active_profile
         qs, project_id, err = _fetch_account_quota(storage, acct_name)
+        return acct_name, is_active, qs, project_id, err
 
-        if json_out:
-            record: dict[str, Any] = {
-                "account": acct_name,
-                "active": is_active,
-                "project_id": project_id,
-            }
-            if qs:
-                record["gemini"] = {
-                    "5h_remaining": qs.gemini_5h_remaining,
-                    "5h_reset": qs.gemini_5h_reset,
-                    "5h_reset_relative": format_relative_countdown(qs.gemini_5h_reset),
-                    "weekly_remaining": qs.gemini_weekly_remaining,
-                    "weekly_reset": qs.gemini_weekly_reset,
-                    "weekly_reset_relative": format_relative_countdown(qs.gemini_weekly_reset),
+    max_workers = min(10, max(1, len(accounts)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for acct_name, is_active, qs, project_id, err in executor.map(fetch_for_account, accounts):
+            if json_out:
+                record: dict[str, Any] = {
+                    "account": acct_name,
+                    "active": is_active,
+                    "project_id": project_id,
                 }
-                record["third_party"] = {
-                    "5h_remaining": qs.third_party_5h_remaining,
-                    "5h_reset": qs.third_party_5h_reset,
-                    "5h_reset_relative": format_relative_countdown(qs.third_party_5h_reset),
-                    "weekly_remaining": qs.third_party_weekly_remaining,
-                    "weekly_reset": qs.third_party_weekly_reset,
-                    "weekly_reset_relative": format_relative_countdown(qs.third_party_weekly_reset),
-                }
+                if qs:
+                    record["gemini"] = {
+                        "5h_remaining": qs.gemini_5h_remaining,
+                        "5h_reset": qs.gemini_5h_reset,
+                        "5h_reset_relative": format_relative_countdown(qs.gemini_5h_reset),
+                        "weekly_remaining": qs.gemini_weekly_remaining,
+                        "weekly_reset": qs.gemini_weekly_reset,
+                        "weekly_reset_relative": format_relative_countdown(qs.gemini_weekly_reset),
+                    }
+                    record["third_party"] = {
+                        "5h_remaining": qs.third_party_5h_remaining,
+                        "5h_reset": qs.third_party_5h_reset,
+                        "5h_reset_relative": format_relative_countdown(qs.third_party_5h_reset),
+                        "weekly_remaining": qs.third_party_weekly_remaining,
+                        "weekly_reset": qs.third_party_weekly_reset,
+                        "weekly_reset_relative": format_relative_countdown(qs.third_party_weekly_reset),
+                    }
+                else:
+                    record["error"] = err
+                json_records.append(record)
             else:
-                record["error"] = err
-            json_records.append(record)
-        else:
-            active_mark = "*" if is_active else ""
-            if qs:
-                g5 = format_quota_cell(qs.gemini_5h_remaining, qs.gemini_5h_reset)
-                gw = format_quota_cell(qs.gemini_weekly_remaining, qs.gemini_weekly_reset)
-                c5 = format_quota_cell(qs.third_party_5h_remaining, qs.third_party_5h_reset)
-                cw = format_quota_cell(qs.third_party_weekly_remaining, qs.third_party_weekly_reset)
-            else:
-                g5 = "[AUTH ERROR]" if "401" in str(err) else "[ERROR]"
-                gw = "-"
-                c5 = "-"
-                cw = "-"
-            text_rows.append((active_mark, acct_name, g5, gw, c5, cw))
+                active_mark = "*" if is_active else ""
+                if qs:
+                    g5 = format_quota_cell(qs.gemini_5h_remaining, qs.gemini_5h_reset)
+                    gw = format_quota_cell(qs.gemini_weekly_remaining, qs.gemini_weekly_reset)
+                    c5 = format_quota_cell(qs.third_party_5h_remaining, qs.third_party_5h_reset)
+                    cw = format_quota_cell(qs.third_party_weekly_remaining, qs.third_party_weekly_reset)
+                else:
+                    g5 = "[AUTH ERROR]" if err and "401" in str(err) else "[ERROR]"
+                    gw = "-"
+                    c5 = "-"
+                    cw = "-"
+                text_rows.append((active_mark, acct_name, g5, gw, c5, cw))
 
     if json_out:
         print(json.dumps(json_records, indent=2))
@@ -939,13 +958,13 @@ def _refresh_account_token(
             except Exception:
                 pass
         method = (
-            _last_refresh_method
-            if _last_refresh_method in ("native", "fallback (agy)")
+            _get_last_refresh_method()
+            if _get_last_refresh_method() in ("native", "fallback (agy)")
             else "native"
         )
         return True, f"Token refreshed successfully ({method})."
     else:
-        return False, f"Failed to refresh token ({_last_refresh_method})."
+        return False, f"Failed to refresh token ({_get_last_refresh_method()})."
 
 
 def cmd_refresh(
@@ -1030,8 +1049,8 @@ def cmd_refresh(
             refreshed = _refresh_token_file(token_path, token_data, storage=storage)
             if refreshed:
                 method = (
-                    _last_refresh_method
-                    if _last_refresh_method in ("native", "fallback (agy)")
+                    _get_last_refresh_method()
+                    if _get_last_refresh_method() in ("native", "fallback (agy)")
                     else "native"
                 )
                 new_data = _read_token_data(token_path)

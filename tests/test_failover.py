@@ -1,8 +1,10 @@
+import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from promux.failover import FailoverEngine
-from promux.models import AccountMeta, AccountState
+from promux.models import AccountMeta, AccountState, QuotaSummary
 
 
 class FakeStorage:
@@ -609,3 +611,47 @@ def test_parse_iso_reset_minutes():
 
     # Custom default
     assert engine._parse_iso_reset_minutes(None, default_minutes=120) == 120
+
+
+def test_rotate_smart_concurrent_candidate_evaluation():
+    storage = FakeStorage()
+    now = datetime.now(timezone.utc)
+    storage.state["active"] = "acc_active"
+    storage.state["accounts"] = {
+        "acc_active": AccountMeta(name="acc_active", enabled=True, last_used_at=now).to_dict(),
+        "acc_slow": AccountMeta(
+            name="acc_slow", enabled=True, last_used_at=now - timedelta(hours=3)
+        ).to_dict(),
+        "acc_fast": AccountMeta(
+            name="acc_fast", enabled=True, last_used_at=now - timedelta(hours=2)
+        ).to_dict(),
+        "acc_best": AccountMeta(
+            name="acc_best", enabled=True, last_used_at=now - timedelta(hours=1)
+        ).to_dict(),
+    }
+
+    quotas = {
+        "acc_active": QuotaSummary(gemini_5h_remaining=0.0, gemini_weekly_remaining=0.5),
+        "acc_slow": QuotaSummary(gemini_5h_remaining=0.6, gemini_weekly_remaining=0.8),
+        "acc_fast": QuotaSummary(gemini_5h_remaining=0.7, gemini_weekly_remaining=0.8),
+        "acc_best": QuotaSummary(gemini_5h_remaining=0.9, gemini_weekly_remaining=0.8),
+    }
+
+    calling_threads = set()
+
+    def fetcher(acct_name):
+        calling_threads.add(threading.current_thread().ident)
+        if acct_name == "acc_slow":
+            time.sleep(0.05)
+        return quotas.get(acct_name), "proj-1", None
+
+    engine = FailoverEngine(storage)
+    res = engine.rotate_smart(quota_fetcher=fetcher, model="gemini")
+
+    assert res.success is True
+    assert res.from_account == "acc_active"
+    assert res.to_account == "acc_best"
+    assert res.five_hour_remaining == 0.9
+
+    # Verify candidate evaluation executed concurrently across worker threads
+    assert len(calling_threads) > 1

@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 
 import pytest
 
@@ -430,3 +432,67 @@ def test_switch_profile_fallback_agy_renewal(tmp_path, sample_token_dict, monkey
     assert live_data["token"]["access_token"] == "agy_refreshed_b"
 
 
+def test_storage_tx_state_thread_local(tmp_path):
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
+
+    results = {}
+    barrier = threading.Barrier(2)
+
+    def worker_a():
+        storage._tx_state = {"thread": "A"}
+        barrier.wait()
+        # Wait for worker_b to inspect and overwrite its own _tx_state
+        barrier.wait()
+        results["A"] = storage._tx_state
+        storage._tx_state = None
+
+    def worker_b():
+        barrier.wait()
+        # Worker B should see None in its own thread-local storage
+        results["B_initial"] = storage._tx_state
+        storage._tx_state = {"thread": "B"}
+        barrier.wait()
+        results["B"] = storage._tx_state
+        storage._tx_state = None
+
+    t1 = threading.Thread(target=worker_a)
+    t2 = threading.Thread(target=worker_b)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert results["B_initial"] is None
+    assert results["A"] == {"thread": "A"}
+    assert results["B"] == {"thread": "B"}
+    assert storage._tx_state is None
+
+
+def test_storage_concurrent_transactions(tmp_path):
+    promux_home = tmp_path / ".promux"
+    gemini_home = tmp_path / ".gemini"
+    storage = StorageEngine(promux_home=promux_home, gemini_home=gemini_home)
+
+    errors = []
+
+    def worker(idx):
+        try:
+            with storage.transaction() as state:
+                state.setdefault("accounts", {})
+                state["accounts"][f"worker_{idx}"] = {"name": f"worker_{idx}"}
+                time.sleep(0.02)
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors
+    loaded = storage.load_state()
+    for i in range(5):
+        assert f"worker_{i}" in loaded["accounts"]

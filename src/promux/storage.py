@@ -30,8 +30,8 @@ class StorageEngine:
         return getattr(self._local, "tx_state", None)
 
     @_tx_state.setter
-    def _tx_state(self, val: dict[str, Any] | None) -> None:
-        self._local.tx_state = val
+    def _tx_state(self, value: dict[str, Any] | None) -> None:
+        self._local.tx_state = value
 
     def _atomic_write_json(self, target_path: Path, data: dict[str, Any]) -> None:
         target_path.parent.mkdir(parents=True, exist_ok=True)
