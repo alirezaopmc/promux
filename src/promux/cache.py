@@ -9,6 +9,7 @@ from .constants import (
     DEFAULT_QUOTA_CACHE_TTL_SECONDS,
     PROMUX_HOME,
 )
+from .lock import file_lock
 from .models import QuotaSummary
 
 
@@ -20,6 +21,7 @@ class QuotaCache:
         self.config_file = self.home / "config.json"
         self.cache_dir = self.home / "cache"
         self.cache_file = self.cache_dir / "quota.json"
+        self.lock_file = self.cache_dir / "quota.lock"
         self._lock = threading.Lock()
 
     def get_ttl_seconds(self) -> int:
@@ -58,11 +60,20 @@ class QuotaCache:
 
     def _write_cache(self, data: dict[str, Any]) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        tmp_file = self.cache_file.with_suffix(".tmp")
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        os.chmod(tmp_file, 0o600)
-        os.replace(tmp_file, self.cache_file)
+        tmp_file = self.cache_file.with_name(
+            f"{self.cache_file.name}.tmp.{os.getpid()}_{threading.get_ident()}"
+        )
+        try:
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            os.chmod(tmp_file, 0o600)
+            os.replace(tmp_file, self.cache_file)
+        finally:
+            if tmp_file.exists():
+                try:
+                    tmp_file.unlink()
+                except OSError:
+                    pass
 
     def get(self, account_name: str) -> QuotaSummary | None:
         """Return cached QuotaSummary if present and not expired, else None."""
@@ -121,20 +132,26 @@ class QuotaCache:
         }
 
         with self._lock:
-            data = self._read_cache()
-            data.setdefault("accounts", {})[account_name] = {
-                "cached_at": now,
-                "quota": quota_dict,
-            }
-            self._write_cache(data)
+            with file_lock(self.lock_file):
+                data = self._read_cache()
+                data.setdefault("accounts", {})[account_name] = {
+                    "cached_at": now,
+                    "quota": quota_dict,
+                }
+                self._write_cache(data)
 
     def invalidate(self, account_name: str | None = None) -> None:
         """Invalidate cache for specific account or all accounts."""
         with self._lock:
-            if account_name is None:
-                self._write_cache({"accounts": {}})
-            else:
-                data = self._read_cache()
-                if account_name in data.get("accounts", {}):
-                    del data["accounts"][account_name]
-                    self._write_cache(data)
+            with file_lock(self.lock_file):
+                if account_name is None:
+                    self._write_cache({"accounts": {}})
+                else:
+                    data = self._read_cache()
+                    if account_name in data.get("accounts", {}):
+                        del data["accounts"][account_name]
+                        self._write_cache(data)
+
+    def clear(self) -> None:
+        """Clear all cached entries."""
+        self.invalidate(None)

@@ -634,6 +634,7 @@ def cmd_whoami(storage: StorageEngine, json_out: bool) -> int:
 def cmd_remove(storage: StorageEngine, name: str, json_out: bool) -> int:
     success = storage.remove_profile(name)
     if success:
+        QuotaCache(storage.home).invalidate(name)
         if json_out:
             print(json.dumps({"success": True, "removed": name}, indent=2))
         else:

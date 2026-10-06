@@ -1,6 +1,7 @@
 import json
 import threading
 import time
+from typing import Any
 
 from promux.cli import main
 from promux.models import QuotaSummary
@@ -246,14 +247,23 @@ def test_cli_next_no_candidates(tmp_path, sample_token_dict, monkeypatch, capsys
 
 def test_cli_remove_success(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cache import QuotaCache
+    from promux.cli import get_storage
+    from promux.models import QuotaSummary
 
     assert main(["save", "todelete"]) == 0
     capsys.readouterr()
+
+    storage = get_storage()
+    cache = QuotaCache(storage.home)
+    cache.set("todelete", QuotaSummary(gemini_5h_remaining=0.8))
+    assert cache.get("todelete") is not None
 
     rc = main(["remove", "todelete"])
     assert rc == 0
     out, _ = capsys.readouterr()
     assert "todelete" in out
+    assert cache.get("todelete") is None
 
     # In JSON mode
     assert main(["save", "todelete2"]) == 0
