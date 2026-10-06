@@ -816,7 +816,9 @@ def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
     json_records = []
     text_rows = []
 
-    def fetch_for_account(acct_meta):
+    def fetch_for_account(
+        acct_meta: AccountMeta,
+    ) -> tuple[str, bool, QuotaSummary | None, str | None, str | None]:
         acct_name = acct_meta.name
         is_active = acct_name == active_profile
         qs, project_id, err = _fetch_account_quota(storage, acct_name)
