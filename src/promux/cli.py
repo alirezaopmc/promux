@@ -29,6 +29,7 @@ from .constants import (
     OAUTH_TOKEN_URL,
     PROMUX_HOME,
 )
+from .cache import QuotaCache
 from .failover import FailoverEngine
 from .formatters import (
     format_quota_cell,
@@ -470,12 +471,23 @@ def cmd_switch(
     smart: bool = False,
     model: str = "gemini",
     failover: FailoverEngine | None = None,
+    no_cache: bool = False,
 ) -> int:
     if smart:
         if failover is None:
             failover = FailoverEngine(storage)
+        cache = QuotaCache(storage.home)
+
+        def _fetch_wrapper(acct: str) -> tuple[QuotaSummary | None, str | None, str | None]:
+            try:
+                res = _fetch_account_quota(storage, acct, no_cache=no_cache, cache=cache)
+                return res[0], res[1], res[2]
+            except TypeError:
+                res = _fetch_account_quota(storage, acct)
+                return res[0], res[1], res[2]
+
         res = failover.rotate_smart(
-            quota_fetcher=lambda acct: _fetch_account_quota(storage, acct),
+            quota_fetcher=_fetch_wrapper,
             model=model,
         )
         if res.success:
@@ -622,6 +634,7 @@ def cmd_whoami(storage: StorageEngine, json_out: bool) -> int:
 def cmd_remove(storage: StorageEngine, name: str, json_out: bool) -> int:
     success = storage.remove_profile(name)
     if success:
+        QuotaCache(storage.home).invalidate(name)
         if json_out:
             print(json.dumps({"success": True, "removed": name}, indent=2))
         else:
@@ -637,17 +650,27 @@ def cmd_remove(storage: StorageEngine, name: str, json_out: bool) -> int:
 def _fetch_account_quota(
     storage: StorageEngine,
     target_name: str,
-) -> tuple[QuotaSummary | None, str | None, str | None]:
+    no_cache: bool = False,
+    cache: QuotaCache | None = None,
+) -> tuple[QuotaSummary | None, str | None, str | None, bool]:
     """Fetch quota for an account, handling token resolution, refresh, and project ID discovery.
 
     Returns:
-        tuple of (QuotaSummary or None, project_id or None, error_message or None)
+        tuple of (QuotaSummary or None, project_id or None, error_message or None, is_cached)
     """
+    if cache is None:
+        cache = QuotaCache(storage.home)
+
     _set_last_refresh_revoked(False)
 
     acct = storage.get_account(target_name)
     if not acct:
-        return None, None, f"Account '{target_name}' not found in vault."
+        return None, None, f"Account '{target_name}' not found in vault.", False
+
+    if not no_cache:
+        cached_qs = cache.get(target_name)
+        if cached_qs is not None:
+            return cached_qs, acct.project_id, None, True
 
     # Locate token file
     is_active = target_name == storage.get_active_profile()
@@ -684,13 +707,15 @@ def _fetch_account_quota(
 
     if not access_token:
         if _get_last_refresh_revoked():
+            cache.invalidate(target_name)
             return (
                 None,
                 None,
                 f"Refresh token for '{target_name}' has expired or been revoked. "
                 f"Please re-authenticate via 'agy' and save using 'promux save {target_name}'.",
+                False,
             )
-        return None, None, f"Could not extract access token for account '{target_name}'."
+        return None, None, f"Could not extract access token for account '{target_name}'.", False
 
     client = QuotaClient(token=access_token)
     project_id = acct.project_id
@@ -704,20 +729,23 @@ def _fetch_account_quota(
                         state["accounts"][target_name]["project_id"] = project_id
         except Exception as e:
             if _get_last_refresh_revoked():
+                cache.invalidate(target_name)
                 return (
                     None,
                     None,
                     f"Refresh token for '{target_name}' has expired or been revoked. "
                     f"Please re-authenticate via 'agy' and save using 'promux save {target_name}'.",
+                    False,
                 )
-            return None, None, f"Failed to load project metadata for '{target_name}': {e}"
+            return None, None, f"Failed to load project metadata for '{target_name}': {e}", False
 
     if not project_id:
-        return None, None, f"Could not determine project ID for account '{target_name}'."
+        return None, None, f"Could not determine project ID for account '{target_name}'.", False
 
     try:
         qs = client.get_quota(project_id)
-        return qs, project_id, None
+        cache.set(target_name, qs)
+        return qs, project_id, None, False
     except Exception as e:
         if "401" in str(e):
             td = _read_token_data(token_path)
@@ -734,27 +762,46 @@ def _fetch_account_quota(
                 client.token = refreshed
                 try:
                     qs = client.get_quota(project_id)
-                    return qs, project_id, None
+                    cache.set(target_name, qs)
+                    return qs, project_id, None, False
                 except Exception as retry_e:
-                    return None, project_id, f"Error retrieving quota: {retry_e}"
+                    if "401" in str(retry_e):
+                        cache.invalidate(target_name)
+                    return None, project_id, f"Error retrieving quota: {retry_e}", False
             else:
+                cache.invalidate(target_name)
                 if _get_last_refresh_revoked():
                     return (
                         None,
                         project_id,
                         f"Authentication failed (401): Refresh token for '{target_name}' has expired or been revoked. "
                         f"Please re-authenticate via 'agy' and save using 'promux save {target_name}'.",
+                        False,
                     )
-                return None, project_id, f"Authentication failed (401): {e}"
-        return None, project_id, f"Error retrieving quota: {e}"
+                return None, project_id, f"Authentication failed (401): {e}", False
+        return None, project_id, f"Error retrieving quota: {e}", False
 
 
-def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
+def cmd_quota(
+    storage: StorageEngine,
+    name: str | None,
+    json_out: bool,
+    no_cache: bool = False,
+) -> int:
     active_profile = storage.get_active_profile()
+    cache = QuotaCache(storage.home)
 
     # Single-profile detail mode
     if name is not None:
-        qs, project_id, err = _fetch_account_quota(storage, name)
+        try:
+            res = _fetch_account_quota(storage, name, no_cache=no_cache, cache=cache)
+        except TypeError:
+            res = _fetch_account_quota(storage, name)
+        if len(res) == 4:
+            qs, project_id, err, is_cached = res
+        else:
+            qs, project_id, err = res[0], res[1], res[2]
+            is_cached = False
         if err or not qs:
             msg = err or f"Could not retrieve quota for '{name}'."
             if json_out:
@@ -763,9 +810,10 @@ def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
             return 1
 
         if json_out:
-            res = {
+            res_dict = {
                 "account": name,
                 "project_id": project_id,
+                "cached": is_cached,
                 "gemini": {
                     "5h_remaining": qs.gemini_5h_remaining,
                     "5h_reset": qs.gemini_5h_reset,
@@ -783,7 +831,7 @@ def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
                     "weekly_reset_relative": format_relative_countdown(qs.third_party_weekly_reset),
                 },
             }
-            print(json.dumps(res, indent=2))
+            print(json.dumps(res_dict, indent=2))
             return 0
 
         active_tag = " [ACTIVE]" if name == active_profile else ""
@@ -818,20 +866,29 @@ def cmd_quota(storage: StorageEngine, name: str | None, json_out: bool) -> int:
 
     def fetch_for_account(
         acct_meta: AccountMeta,
-    ) -> tuple[str, bool, QuotaSummary | None, str | None, str | None]:
+    ) -> tuple[str, bool, QuotaSummary | None, str | None, str | None, bool]:
         acct_name = acct_meta.name
         is_active = acct_name == active_profile
-        qs, project_id, err = _fetch_account_quota(storage, acct_name)
-        return acct_name, is_active, qs, project_id, err
+        try:
+            res = _fetch_account_quota(storage, acct_name, no_cache=no_cache, cache=cache)
+        except TypeError:
+            res = _fetch_account_quota(storage, acct_name)
+        if len(res) == 4:
+            qs, project_id, err, is_cached = res
+        else:
+            qs, project_id, err = res[0], res[1], res[2]
+            is_cached = False
+        return acct_name, is_active, qs, project_id, err, is_cached
 
     max_workers = min(10, max(1, len(accounts)))
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for acct_name, is_active, qs, project_id, err in executor.map(fetch_for_account, accounts):
+        for acct_name, is_active, qs, project_id, err, is_cached in executor.map(fetch_for_account, accounts):
             if json_out:
                 record: dict[str, Any] = {
                     "account": acct_name,
                     "active": is_active,
                     "project_id": project_id,
+                    "cached": is_cached,
                 }
                 if qs:
                     record["gemini"] = {
@@ -1258,6 +1315,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="gemini",
         help="Target model tier to evaluate for --smart (default: gemini)",
     )
+    switch_p.add_argument(
+        "--no-cache",
+        action="store_true",
+        default=False,
+        help="Bypass quota cache when evaluating candidates for smart switching",
+    )
 
     # next
     next_p = sub.add_parser(
@@ -1278,6 +1341,12 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=None,
         help="Profile name (default: all profiles in vault)",
+    )
+    quota_p.add_argument(
+        "--no-cache",
+        action="store_true",
+        default=False,
+        help="Bypass quota cache and query Cloud Code Assist API directly",
     )
 
     # refresh
@@ -1472,11 +1541,12 @@ def main(argv: list[str] | None = None) -> int:
                 smart=args.smart,
                 model=args.model,
                 failover=failover,
+                no_cache=getattr(args, "no_cache", False),
             )
         elif args.command == "next":
             return cmd_next(failover, args.reason, args.cooldown, json_out)
         elif args.command == "quota":
-            return cmd_quota(storage, args.name, json_out)
+            return cmd_quota(storage, args.name, json_out, no_cache=getattr(args, "no_cache", False))
         elif args.command == "refresh":
             return cmd_refresh(storage, args.name, args.force, json_out)
         elif args.command == "whoami":

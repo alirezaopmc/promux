@@ -1,6 +1,7 @@
 import json
 import threading
 import time
+from typing import Any
 
 from promux.cli import main
 from promux.models import QuotaSummary
@@ -246,14 +247,23 @@ def test_cli_next_no_candidates(tmp_path, sample_token_dict, monkeypatch, capsys
 
 def test_cli_remove_success(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cache import QuotaCache
+    from promux.cli import get_storage
+    from promux.models import QuotaSummary
 
     assert main(["save", "todelete"]) == 0
     capsys.readouterr()
+
+    storage = get_storage()
+    cache = QuotaCache(storage.home)
+    cache.set("todelete", QuotaSummary(gemini_5h_remaining=0.8))
+    assert cache.get("todelete") is not None
 
     rc = main(["remove", "todelete"])
     assert rc == 0
     out, _ = capsys.readouterr()
     assert "todelete" in out
+    assert cache.get("todelete") is None
 
     # In JSON mode
     assert main(["save", "todelete2"]) == 0
@@ -630,11 +640,12 @@ def test_fetch_account_quota_success(tmp_path, sample_token_dict, monkeypatch):
     )
 
     storage = get_storage()
-    qs, pid, err = _fetch_account_quota(storage, "testacc")
+    qs, pid, err, is_cached = _fetch_account_quota(storage, "testacc")
     assert err is None
     assert pid == "proj-123"
     assert qs is not None
     assert qs.gemini_5h_remaining == 0.95
+    assert is_cached is False
 
 
 def test_fetch_account_quota_caches_project_id_transactionally(tmp_path, sample_token_dict, monkeypatch):
@@ -671,11 +682,12 @@ def test_fetch_account_quota_caches_project_id_transactionally(tmp_path, sample_
 
     monkeypatch.setattr(storage, "transaction", spy_transaction)
 
-    qs, pid, err = _fetch_account_quota(storage, "testacc")
+    qs, pid, err, is_cached = _fetch_account_quota(storage, "testacc")
     assert err is None
     assert pid == "proj-tx-123"
     assert len(tx_called) == 1
     assert storage.load_state()["accounts"]["testacc"]["project_id"] == "proj-tx-123"
+    assert is_cached is False
 
 
 def test_fetch_account_quota_nonexistent(tmp_path, monkeypatch):
@@ -683,10 +695,11 @@ def test_fetch_account_quota_nonexistent(tmp_path, monkeypatch):
     from promux.cli import _fetch_account_quota, get_storage
 
     storage = get_storage()
-    qs, pid, err = _fetch_account_quota(storage, "nonexistent")
+    qs, pid, err, is_cached = _fetch_account_quota(storage, "nonexistent")
     assert qs is None
     assert err is not None
     assert "not found" in err.lower()
+    assert is_cached is False
 
 
 def test_fetch_account_quota_401_retry_success(tmp_path, sample_token_dict, monkeypatch):
@@ -717,12 +730,13 @@ def test_fetch_account_quota_401_retry_success(tmp_path, sample_token_dict, monk
     monkeypatch.setattr("promux.cli._refresh_token_file", lambda p, td: "new_token_401")
 
     storage = get_storage()
-    qs, pid, err = _fetch_account_quota(storage, "testacc")
+    qs, pid, err, is_cached = _fetch_account_quota(storage, "testacc")
     assert err is None
     assert pid == "proj-401"
     assert qs is not None
     assert qs.gemini_5h_remaining == 0.85
     assert calls["count"] == 2
+    assert is_cached is False
 
 
 def test_fetch_account_quota_401_refresh_failure(tmp_path, sample_token_dict, monkeypatch):
@@ -740,11 +754,12 @@ def test_fetch_account_quota_401_refresh_failure(tmp_path, sample_token_dict, mo
     monkeypatch.setattr("promux.cli._refresh_token_file", lambda p, td: None)
 
     storage = get_storage()
-    qs, pid, err = _fetch_account_quota(storage, "testacc")
+    qs, pid, err, is_cached = _fetch_account_quota(storage, "testacc")
     assert qs is None
     assert pid == "proj-401"
     assert err is not None
     assert "401" in err
+    assert is_cached is False
 
 
 def test_cli_quota_all_profiles_matrix(tmp_path, sample_token_dict, monkeypatch, capsys):
@@ -2375,3 +2390,246 @@ def test_cli_token_refresh_thread_local():
     finally:
         _set_last_refresh_method("native")
         _set_last_refresh_revoked(False)
+
+
+def test_quota_cache_fetch_account_quota_integration(tmp_path, sample_token_dict, monkeypatch):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import _fetch_account_quota, get_storage, main
+    from promux.quota import QuotaClient
+    from promux.cache import QuotaCache
+
+    main(["save", "acc1", "--email", "1@test.com"])
+    storage = get_storage()
+    cache = QuotaCache(storage.home)
+
+    calls = {"count": 0}
+    mock_qs = QuotaSummary(
+        gemini_5h_remaining=0.88,
+        gemini_weekly_remaining=0.99,
+        third_party_5h_remaining=0.77,
+        third_party_weekly_remaining=0.66,
+    )
+
+    def mock_get_quota(self, project_id):
+        calls["count"] += 1
+        return mock_qs
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda self: {"project_id": "proj-1"})
+    monkeypatch.setattr(QuotaClient, "get_quota", mock_get_quota)
+
+    # 1. First run: cold cache -> live fetch
+    qs1, pid1, err1, cached1 = _fetch_account_quota(storage, "acc1", cache=cache)
+    assert err1 is None
+    assert pid1 == "proj-1"
+    assert qs1 is not None
+    assert qs1.gemini_5h_remaining == 0.88
+    assert cached1 is False
+    assert calls["count"] == 1
+
+    # Verify persistent cache populated
+    assert cache.get("acc1") is not None
+
+    # 2. Second run: warm cache -> hit without network query
+    qs2, pid2, err2, cached2 = _fetch_account_quota(storage, "acc1", cache=cache)
+    assert err2 is None
+    assert pid2 == "proj-1"
+    assert qs2 is not None
+    assert qs2.gemini_5h_remaining == 0.88
+    assert cached2 is True
+    assert calls["count"] == 1  # No additional network query
+
+    # 3. Third run: no_cache=True -> forces live query
+    qs3, pid3, err3, cached3 = _fetch_account_quota(storage, "acc1", no_cache=True, cache=cache)
+    assert err3 is None
+    assert pid3 == "proj-1"
+    assert qs3 is not None
+    assert cached3 is False
+    assert calls["count"] == 2  # Queried again!
+
+
+def test_quota_cache_cmd_quota_overview_and_detail_json(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import cmd_quota, get_storage, main
+    from promux.quota import QuotaClient
+
+    main(["save", "acc1", "--email", "1@test.com"])
+    token2 = dict(sample_token_dict)
+    token2["token"]["access_token"] = "acc2_token"
+    (tmp_path / ".gemini" / "antigravity-oauth-token").write_text(json.dumps(token2))
+    main(["save", "acc2", "--email", "2@test.com"])
+    capsys.readouterr()
+
+    storage = get_storage()
+    calls = {"count": 0}
+    mock_qs = QuotaSummary(
+        gemini_5h_remaining=0.91,
+        gemini_weekly_remaining=0.82,
+        third_party_5h_remaining=0.73,
+        third_party_weekly_remaining=0.64,
+    )
+
+    def mock_get_quota(self, project_id):
+        calls["count"] += 1
+        return mock_qs
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda self: {"project_id": "proj-common"})
+    monkeypatch.setattr(QuotaClient, "get_quota", mock_get_quota)
+
+    # 1. Multi-profile overview cold run -> cached=False
+    rc = cmd_quota(storage, name=None, json_out=True)
+    assert rc == 0
+    records = json.loads(capsys.readouterr().out)
+    assert len(records) == 2
+    assert records[0]["cached"] is False
+    assert records[1]["cached"] is False
+    assert calls["count"] == 2
+
+    # 2. Multi-profile overview warm run -> cached=True, no new network calls
+    rc = cmd_quota(storage, name=None, json_out=True)
+    assert rc == 0
+    records2 = json.loads(capsys.readouterr().out)
+    assert len(records2) == 2
+    assert records2[0]["cached"] is True
+    assert records2[1]["cached"] is True
+    assert calls["count"] == 2
+
+    # 3. Multi-profile overview with no_cache=True -> cached=False, calls refreshed
+    rc = cmd_quota(storage, name=None, json_out=True, no_cache=True)
+    assert rc == 0
+    records3 = json.loads(capsys.readouterr().out)
+    assert len(records3) == 2
+    assert records3[0]["cached"] is False
+    assert records3[1]["cached"] is False
+    assert calls["count"] == 4
+
+    # 4. Single-profile detail mode warm run -> cached=True
+    rc = cmd_quota(storage, name="acc1", json_out=True)
+    assert rc == 0
+    detail1 = json.loads(capsys.readouterr().out)
+    assert detail1["cached"] is True
+    assert calls["count"] == 4
+
+    # 5. Single-profile detail mode with no_cache=True -> cached=False
+    rc = cmd_quota(storage, name="acc1", json_out=True, no_cache=True)
+    assert rc == 0
+    detail2 = json.loads(capsys.readouterr().out)
+    assert detail2["cached"] is False
+    assert calls["count"] == 5
+
+
+def test_cli_quota_no_cache_flag_dispatch(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main
+    from promux.quota import QuotaClient
+
+    main(["save", "acc1", "--email", "1@test.com"])
+    capsys.readouterr()
+
+    calls = {"count": 0}
+    mock_qs = QuotaSummary(
+        gemini_5h_remaining=0.80,
+        gemini_weekly_remaining=0.90,
+    )
+
+    def mock_get_quota(self, project_id):
+        calls["count"] += 1
+        return mock_qs
+
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda self: {"project_id": "proj-dispatch"})
+    monkeypatch.setattr(QuotaClient, "get_quota", mock_get_quota)
+
+    # Cold run via CLI
+    assert main(["quota", "--json"]) == 0
+    out1 = json.loads(capsys.readouterr().out)
+    assert out1[0]["cached"] is False
+    assert calls["count"] == 1
+
+    # Warm run via CLI: cached=True
+    assert main(["quota", "--json"]) == 0
+    out2 = json.loads(capsys.readouterr().out)
+    assert out2[0]["cached"] is True
+    assert calls["count"] == 1
+
+    # --no-cache flag via CLI overview: cached=False
+    assert main(["quota", "--no-cache", "--json"]) == 0
+    out3 = json.loads(capsys.readouterr().out)
+    assert out3[0]["cached"] is False
+    assert calls["count"] == 2
+
+    # --no-cache flag via CLI single profile: cached=False
+    assert main(["quota", "acc1", "--no-cache", "--json"]) == 0
+    out4 = json.loads(capsys.readouterr().out)
+    assert out4["cached"] is False
+    assert calls["count"] == 3
+
+
+def test_quota_cache_invalidation_on_401(tmp_path, sample_token_dict, monkeypatch):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import _fetch_account_quota, get_storage, main
+    from promux.quota import QuotaClient
+    from promux.cache import QuotaCache
+
+    main(["save", "acc1", "--email", "1@test.com"])
+    storage = get_storage()
+    cache = QuotaCache(storage.home)
+
+    mock_qs = QuotaSummary(gemini_5h_remaining=0.88)
+    monkeypatch.setattr(QuotaClient, "load_metadata", lambda self: {"project_id": "proj-401-inv"})
+    monkeypatch.setattr(QuotaClient, "get_quota", lambda self, pid: mock_qs)
+
+    # Initial success: cache gets populated
+    qs, pid, err, cached = _fetch_account_quota(storage, "acc1", cache=cache)
+    assert err is None
+    assert cache.get("acc1") is not None
+
+    # Next attempt triggers 401 with failed refresh
+    monkeypatch.setattr(
+        QuotaClient,
+        "get_quota",
+        lambda self, pid: (_ for _ in ()).throw(Exception("HTTP Error 401: Unauthorized")),
+    )
+    monkeypatch.setattr("promux.cli._refresh_token_file", lambda p, td, storage=None: None)
+
+    qs_err, pid_err, err_msg, cached_err = _fetch_account_quota(storage, "acc1", no_cache=True, cache=cache)
+    assert err_msg is not None
+    assert "401" in err_msg
+    # Cache must now be invalidated!
+    assert cache.get("acc1") is None
+
+
+def test_cmd_switch_smart_no_cache_flag(tmp_path, sample_token_dict, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cli import main, get_storage
+    from promux.models import QuotaSummary
+
+    main(["save", "acc1", "--email", "1@test.com"])
+    main(["save", "acc2", "--email", "2@test.com"])
+    main(["switch", "acc1"])
+
+    calls: list[dict[str, Any]] = []
+
+    def mock_fetch(st, acct, no_cache=False, cache=None):
+        calls.append({"acct": acct, "no_cache": no_cache, "cache": cache})
+        if acct == "acc2":
+            return QuotaSummary(gemini_5h_remaining=0.9, gemini_weekly_remaining=0.9), "p2", None, False
+        return QuotaSummary(gemini_5h_remaining=0.1, gemini_weekly_remaining=0.1), "p1", None, False
+
+    monkeypatch.setattr("promux.cli._fetch_account_quota", mock_fetch)
+
+    # 1. Without --no-cache
+    ret = main(["switch", "--smart"])
+    assert ret == 0
+    assert any(c["acct"] == "acc2" and c["no_cache"] is False for c in calls)
+    capsys.readouterr()
+
+    # Reset calls and switch back to acc1
+    calls.clear()
+    main(["switch", "acc1"])
+    capsys.readouterr()
+
+    # 2. With --no-cache
+    ret2 = main(["switch", "--smart", "--no-cache"])
+    assert ret2 == 0
+    assert any(c["acct"] == "acc2" and c["no_cache"] is True for c in calls)
+
+

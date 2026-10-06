@@ -80,13 +80,21 @@ _promux_completion() {
                 return 0
             fi
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--smart --model $common_opts" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--smart --model --no-cache $common_opts" -- "$cur") )
             else
                 COMPREPLY=( $(compgen -W "$(_promux_accounts)" -- "$cur") )
             fi
             return 0
             ;;
-        remove|quota)
+        quota)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--no-cache $common_opts" -- "$cur") )
+            else
+                COMPREPLY=( $(compgen -W "$(_promux_accounts)" -- "$cur") )
+            fi
+            return 0
+            ;;
+        remove)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "$common_opts" -- "$cur") )
             else
@@ -198,10 +206,17 @@ _promux() {
                                 _arguments \
                                     '--smart[Automatically switch to standby account with highest quota]' \
                                     '--model[Target model tier]:model:(gemini claude gpt)' \
+                                    '--no-cache[Bypass quota cache and query API directly]' \
                                     '--json[Output structured JSON]' \
                                     '::account:_promux_accounts'
                                 ;;
-                            remove|quota)
+                            quota)
+                                _arguments \
+                                    '--no-cache[Bypass quota cache and query API directly]' \
+                                    '--json[Output structured JSON]' \
+                                    '::account:_promux_accounts'
+                                ;;
+                            remove)
                                 _arguments \
                                     '--json[Output structured JSON]' \
                                     '1:account:_promux_accounts'
@@ -240,10 +255,17 @@ _promux() {
                     _arguments \
                         '--smart[Automatically switch to standby account with highest quota]' \
                         '--model[Target model tier]:model:(gemini claude gpt)' \
+                        '--no-cache[Bypass quota cache and query API directly]' \
                         '--json[Output structured JSON]' \
                         '::account:_promux_accounts'
                     ;;
-                remove|quota)
+                quota)
+                    _arguments \
+                        '--no-cache[Bypass quota cache and query API directly]' \
+                        '--json[Output structured JSON]' \
+                        '::account:_promux_accounts'
+                    ;;
+                remove)
                     _arguments \
                         '--json[Output structured JSON]' \
                         '1:account:_promux_accounts'

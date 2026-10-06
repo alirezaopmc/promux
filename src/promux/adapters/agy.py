@@ -44,7 +44,8 @@ class AgyAdapter(BaseToolAdapter):
     ) -> tuple[QuotaSummary | None, str | None, str | None]:
         from ..cli import _fetch_account_quota
 
-        return _fetch_account_quota(storage, account_name)
+        res = _fetch_account_quota(storage, account_name)
+        return res[0], res[1], res[2]
 
     @property
     def supports_watch(self) -> bool:

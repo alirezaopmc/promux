@@ -40,6 +40,7 @@ def test_generate_bash_completion() -> None:
     # Check flags for switch
     assert "--smart" in script
     assert "--model" in script
+    assert "--no-cache" in script
 
     # Syntax check via bash -n if available
     bash_path = shutil.which("bash")
@@ -73,3 +74,4 @@ def test_generate_zsh_completion() -> None:
     # Check flags for switch
     assert "--smart" in script
     assert "--model" in script
+    assert "--no-cache" in script
