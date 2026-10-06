@@ -7,6 +7,9 @@ PROMUX_HOME = Path(os.environ.get("PROMUX_HOME", Path.home() / ".promux"))
 ACCOUNTS_DIR = PROMUX_HOME / "accounts"
 STATE_FILE = PROMUX_HOME / "state.json"
 LOCK_FILE = PROMUX_HOME / "manager.lock"
+CONFIG_FILE = PROMUX_HOME / "config.json"
+CACHE_DIR = PROMUX_HOME / "cache"
+QUOTA_CACHE_FILE = CACHE_DIR / "quota.json"
 
 # Gemini / Antigravity CLI Paths
 GEMINI_CLI_HOME = Path(
@@ -68,3 +71,4 @@ DEFAULT_POLL_SECONDS = 1.0
 DEFAULT_COOLDOWN_MINUTES = 60
 DEFAULT_LOCK_TIMEOUT = 10.0
 DEFAULT_HTTP_TIMEOUT = 15.0
+DEFAULT_QUOTA_CACHE_TTL_SECONDS = 300
