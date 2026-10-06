@@ -374,14 +374,14 @@ promux --version         # shorthand
 
 Output:
 ```text
-promux 0.3.0 (Python 3.14.4, Linux-x86_64)
+promux 0.4.0 (Python 3.14.4, Linux-x86_64)
 Supported tools: agy (default), claude, codex, cursor
 ```
 
 JSON output:
 ```json
 {
-  "version": "0.3.1",
+  "version": "0.4.0",
   "python": "3.14.4",
   "platform": "Linux-x86_64",
   "tools": ["agy", "claude", "codex", "cursor"],

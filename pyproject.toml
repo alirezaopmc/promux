@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "promux"
-version = "0.3.1"
+version = "0.4.0"
 description = "Antigravity CLI profile multiplexer & quota failover daemon"
 readme = "README.md"
 license = {text = "MIT"}

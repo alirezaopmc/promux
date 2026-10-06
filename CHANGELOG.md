@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-06
+
+### Added
+- Configurable per-account quota caching system (`QuotaCache`) stored in `~/.promux/cache/quota.json` (`0600` permissions).
+- Configurable TTL support via `quota_cache_ttl_seconds` in `~/.promux/config.json` (defaults to 300s / 5 minutes).
+- Environment variable override `PROMUX_QUOTA_CACHE_TTL` taking highest precedence for TTL configuration.
+- `--no-cache` CLI flag for `promux quota` and `promux switch --smart` to bypass cached quotas and query the API directly.
+- JSON output support with `"cached": true/false` field for quota responses.
+- Automatic cache invalidation upon authentication failure (401 Unauthorized / revoked token).
+- Shell auto-completion updates for bash and zsh supporting `--no-cache`.
+
 ## [0.3.1] - 2026-09-30
 
 ### Changed
