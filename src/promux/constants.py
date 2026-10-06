@@ -1,3 +1,4 @@
+import json
 import os
 import re
 from pathlib import Path
@@ -70,5 +71,33 @@ RESET_HINT_RE = re.compile(r"(?i)Resets in\s+(?P<reset>~?[^.)\n]+)")
 DEFAULT_POLL_SECONDS = 1.0
 DEFAULT_COOLDOWN_MINUTES = 60
 DEFAULT_LOCK_TIMEOUT = 10.0
-DEFAULT_HTTP_TIMEOUT = 15.0
+
+
+def get_default_http_timeout(config_file: Path | None = None) -> float:
+    """Resolve default HTTP timeout from env var, config.json, or 5.0s default."""
+    env_val = os.environ.get("PROMUX_HTTP_TIMEOUT")
+    if env_val:
+        try:
+            val = float(env_val)
+            if val > 0:
+                return val
+        except ValueError:
+            pass
+
+    cfg = config_file or CONFIG_FILE
+    if cfg.exists():
+        try:
+            with open(cfg, encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    t = data.get("http_timeout_seconds")
+                    if isinstance(t, (int, float)) and t > 0:
+                        return float(t)
+        except Exception:
+            pass
+
+    return 5.0
+
+
+DEFAULT_HTTP_TIMEOUT = get_default_http_timeout()
 DEFAULT_QUOTA_CACHE_TTL_SECONDS = 300

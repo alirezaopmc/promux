@@ -214,7 +214,7 @@ def test_constants_defaults_and_paths():
     assert DEFAULT_POLL_SECONDS == 1.0
     assert DEFAULT_COOLDOWN_MINUTES == 60
     assert DEFAULT_LOCK_TIMEOUT == 10.0
-    assert DEFAULT_HTTP_TIMEOUT == 15.0
+    assert DEFAULT_HTTP_TIMEOUT == 5.0
 
     assert CODE_ASSIST_BASE_URL == "https://cloudcode-pa.googleapis.com"
     assert LOAD_ENDPOINT == "/v1internal:loadCodeAssist"

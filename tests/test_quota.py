@@ -191,3 +191,50 @@ def test_quota_client_get_request(monkeypatch):
     assert captured_req.headers["Authorization"] == "Bearer test_token"
     assert captured_req.headers["User-agent"] == USER_AGENT
     assert captured_timeout == DEFAULT_HTTP_TIMEOUT
+
+
+def test_get_default_http_timeout(tmp_path, monkeypatch):
+    from promux.constants import get_default_http_timeout
+
+    monkeypatch.delenv("PROMUX_HTTP_TIMEOUT", raising=False)
+    dummy_config = tmp_path / "nonexistent.json"
+    assert get_default_http_timeout(dummy_config) == 5.0
+
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text('{"http_timeout_seconds": 8.5}', encoding="utf-8")
+    assert get_default_http_timeout(cfg_file) == 8.5
+
+    monkeypatch.setenv("PROMUX_HTTP_TIMEOUT", "3.0")
+    assert get_default_http_timeout(cfg_file) == 3.0
+
+
+def test_quota_client_fast_abort_on_timeout(monkeypatch):
+    import pytest
+
+    client = QuotaClient(token="test_token")
+    calls = []
+
+    def mock_urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        raise urllib.error.URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+    with pytest.raises(urllib.error.URLError):
+        client._post(LOAD_ENDPOINT, {})
+    assert len(calls) == 1
+
+
+def test_quota_client_fast_abort_on_auth_error(monkeypatch):
+    import pytest
+
+    client = QuotaClient(token="test_token")
+    calls = []
+
+    def mock_urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+    with pytest.raises(urllib.error.HTTPError):
+        client._post(LOAD_ENDPOINT, {})
+    assert len(calls) == 1

@@ -4,13 +4,13 @@ import urllib.request
 from typing import Any
 
 from .constants import (
-    DEFAULT_HTTP_TIMEOUT,
     FALLBACK_CODE_ASSIST_BASE_URL,
     LOAD_ENDPOINT,
     QUOTA_ENDPOINT,
     USER_AGENT,
     USERINFO_URL,
     detect_code_assist_url,
+    get_default_http_timeout,
 )
 from .models import QuotaSummary
 
@@ -19,11 +19,11 @@ class QuotaClient:
     """Client for Cloud Code Assist and Google UserInfo REST endpoints."""
 
     def __init__(
-        self, token: str, base_url: str | None = None, timeout: float = DEFAULT_HTTP_TIMEOUT
+        self, token: str, base_url: str | None = None, timeout: float | None = None
     ):
         self.token = token
         self.base_url = (base_url or detect_code_assist_url()).rstrip("/")
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else get_default_http_timeout()
 
     def _post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")
@@ -51,6 +51,11 @@ class QuotaClient:
                     return data if isinstance(data, dict) else {}
             except (urllib.error.HTTPError, urllib.error.URLError, OSError) as e:
                 last_error = e
+                err_str = str(e).lower()
+                if isinstance(e, (TimeoutError, urllib.error.URLError)) and "timed out" in err_str:
+                    break
+                if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403):
+                    break
                 continue
         if last_error:
             raise last_error

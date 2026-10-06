@@ -137,6 +137,97 @@ class FailoverEngine:
         model: str = "gemini",
         default_cooldown_minutes: int = DEFAULT_COOLDOWN_MINUTES,
     ) -> SmartRotationResult:
+        active_name = (
+            self.storage.get_active_profile()
+            if hasattr(self.storage, "get_active_profile")
+            else self.storage.load_state().get("active")
+        )
+        eligible = self.get_eligible_standby(exclude=active_name)
+        if not eligible:
+            return SmartRotationResult(
+                success=False,
+                from_account=active_name,
+                to_account=None,
+                model=model,
+                reason="No eligible standby accounts",
+                cooldown_until=None,
+            )
+
+        scored_candidates: list[tuple[AccountMeta, float, float, str | None]] = []
+
+        def fetch_candidate(candidate: AccountMeta) -> tuple[AccountMeta, QuotaSummary | None]:
+            try:
+                qs, _, _ = quota_fetcher(candidate.name)
+                return candidate, qs
+            except Exception:
+                return candidate, None
+
+        max_workers = min(20, max(1, len(eligible)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for candidate, qs in executor.map(fetch_candidate, eligible):
+                if qs is None:
+                    continue
+
+                if model.lower() == "gemini":
+                    five_hour = qs.gemini_5h_remaining
+                    weekly = qs.gemini_weekly_remaining
+                    reset_time = qs.gemini_5h_reset
+                else:
+                    five_hour = qs.third_party_5h_remaining
+                    weekly = qs.third_party_weekly_remaining
+                    reset_time = qs.third_party_5h_reset
+
+                if five_hour is None or weekly is None:
+                    continue
+                if five_hour <= 0.0 or weekly <= 0.0:
+                    continue
+
+                scored_candidates.append((candidate, five_hour, weekly, reset_time))
+
+        if not scored_candidates:
+            return SmartRotationResult(
+                success=False,
+                from_account=active_name,
+                to_account=None,
+                model=model,
+                reason=f"No standby accounts found with available quota for '{model}' models",
+                cooldown_until=None,
+            )
+
+        def _candidate_sort_key(
+            item: tuple[AccountMeta, float, float, str | None],
+        ) -> tuple[float, float, int, datetime]:
+            c, f_hr, wk, _ = item
+            dt = c.last_used_at
+            if dt is None:
+                lru_dt = datetime.min.replace(tzinfo=timezone.utc)
+                has_used = 0
+            else:
+                lru_dt = dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+                has_used = 1
+            return (-f_hr, -wk, has_used, lru_dt)
+
+        scored_candidates.sort(key=_candidate_sort_key)
+        best, best_five_hour, best_weekly, _ = scored_candidates[0]
+
+        active_qs: QuotaSummary | None = None
+        if active_name:
+            try:
+                active_qs, _, _ = quota_fetcher(active_name)
+            except Exception:
+                active_qs = None
+
+        if not self.storage.switch_profile(best.name):
+            return SmartRotationResult(
+                success=False,
+                from_account=active_name,
+                to_account=best.name,
+                model=model,
+                reason=f"Failed to switch token to {best.name}",
+                cooldown_until=None,
+            )
+
+        cooldown_until: datetime | None = None
         tx_func = getattr(self.storage, "transaction", None)
         if callable(tx_func):
             cm = self.storage.transaction()
@@ -151,93 +242,7 @@ class FailoverEngine:
             cm = _fallback_tx()
 
         with cm as state:
-            active_name = state.get("active")
-
-            eligible = self.get_eligible_standby(exclude=active_name)
-            if not eligible:
-                return SmartRotationResult(
-                    success=False,
-                    from_account=active_name,
-                    to_account=None,
-                    model=model,
-                    reason="No eligible standby accounts",
-                    cooldown_until=None,
-                )
-
-            scored_candidates: list[tuple[AccountMeta, float, float, str | None]] = []
-
-            def fetch_candidate(candidate: AccountMeta) -> tuple[AccountMeta, QuotaSummary | None]:
-                try:
-                    qs, _, _ = quota_fetcher(candidate.name)
-                    return candidate, qs
-                except Exception:
-                    return candidate, None
-
-            max_workers = min(10, max(1, len(eligible)))
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                for candidate, qs in executor.map(fetch_candidate, eligible):
-                    if qs is None:
-                        continue
-
-                    if model.lower() == "gemini":
-                        five_hour = qs.gemini_5h_remaining
-                        weekly = qs.gemini_weekly_remaining
-                        reset_time = qs.gemini_5h_reset
-                    else:
-                        five_hour = qs.third_party_5h_remaining
-                        weekly = qs.third_party_weekly_remaining
-                        reset_time = qs.third_party_5h_reset
-
-                    if five_hour is None or weekly is None:
-                        continue
-                    if five_hour <= 0.0 or weekly <= 0.0:
-                        continue
-
-                    scored_candidates.append((candidate, five_hour, weekly, reset_time))
-
-            if not scored_candidates:
-                return SmartRotationResult(
-                    success=False,
-                    from_account=active_name,
-                    to_account=None,
-                    model=model,
-                    reason=f"No standby accounts found with available quota for '{model}' models",
-                    cooldown_until=None,
-                )
-
-            def _candidate_sort_key(
-                item: tuple[AccountMeta, float, float, str | None],
-            ) -> tuple[float, float, int, datetime]:
-                c, f_hr, wk, _ = item
-                dt = c.last_used_at
-                if dt is None:
-                    lru_dt = datetime.min.replace(tzinfo=timezone.utc)
-                    has_used = 0
-                else:
-                    lru_dt = dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
-                    has_used = 1
-                return (-f_hr, -wk, has_used, lru_dt)
-
-            scored_candidates.sort(key=_candidate_sort_key)
-            best, best_five_hour, best_weekly, _ = scored_candidates[0]
-
-            if not self.storage.switch_profile(best.name):
-                return SmartRotationResult(
-                    success=False,
-                    from_account=active_name,
-                    to_account=best.name,
-                    model=model,
-                    reason=f"Failed to switch token to {best.name}",
-                    cooldown_until=None,
-                )
-
-            cooldown_until: datetime | None = None
             if active_name and active_name in state.get("accounts", {}):
-                try:
-                    active_qs, _, _ = quota_fetcher(active_name)
-                except Exception:
-                    active_qs = None
-
                 if active_qs is not None:
                     if model.lower() == "gemini":
                         active_5h = active_qs.gemini_5h_remaining
@@ -272,13 +277,13 @@ class FailoverEngine:
             if best.name in state.get("accounts", {}):
                 state["accounts"][best.name]["last_used_at"] = now_iso
 
-            return SmartRotationResult(
-                success=True,
-                from_account=active_name,
-                to_account=best.name,
-                reason="smart",
-                model=model,
-                five_hour_remaining=best_five_hour,
-                weekly_remaining=best_weekly,
-                cooldown_until=cooldown_until,
-            )
+        return SmartRotationResult(
+            success=True,
+            from_account=active_name,
+            to_account=best.name,
+            reason="smart",
+            model=model,
+            five_hour_remaining=best_five_hour,
+            weekly_remaining=best_weekly,
+            cooldown_until=cooldown_until,
+        )

@@ -880,7 +880,7 @@ def cmd_quota(
             is_cached = False
         return acct_name, is_active, qs, project_id, err, is_cached
 
-    max_workers = min(10, max(1, len(accounts)))
+    max_workers = min(20, max(1, len(accounts)))
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         for acct_name, is_active, qs, project_id, err, is_cached in executor.map(fetch_for_account, accounts):
             if json_out:

@@ -19,6 +19,9 @@ class FakeStorage:
     def save_state(self, state):
         self.state = state
 
+    def get_active_profile(self):
+        return self.state.get("active")
+
     @contextmanager
     def transaction(self):
         yield self.state
