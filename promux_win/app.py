@@ -53,7 +53,7 @@ def find_free_port(preferred: int = DEFAULT_PORT) -> int:
             return s.getsockname()[1]
 
 
-def launch_native_app_window(url: str) -> bool:
+def launch_native_app_window(url: str, prefer_edge: bool = False) -> bool:
     """Launch native borderless application window using Chrome or Edge, or fallback to browser."""
     try:
         import ctypes
@@ -61,27 +61,27 @@ def launch_native_app_window(url: str) -> bool:
     except Exception:
         pass
 
-    user_data_dir = os.path.expandvars(r"%LOCALAPPDATA%\Promux\BrowserProfile")
-
-    candidates = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
-        shutil.which("chrome"),
+    edge_candidates = [
         os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
         os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
         os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe"),
         shutil.which("msedge"),
     ]
+    chrome_candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        shutil.which("chrome"),
+    ]
+
+    candidates = (edge_candidates + chrome_candidates) if prefer_edge else (chrome_candidates + edge_candidates)
 
     for exe in candidates:
         if exe and os.path.exists(exe):
             cmd = [
                 exe,
                 f"--app={url}",
-                f"--user-data-dir={user_data_dir}",
-                "--app-id=promux_desktop_gui",
-                "--window-size=1120,740",
+                "--window-size=1180,780",
                 "--no-first-run",
                 "--no-default-browser-check",
             ]
@@ -107,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Promux Windows — Antigravity Account Multiplexer")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Server port (default: 18420)")
     parser.add_argument("--browser", action="store_true", help="Launch in default browser tab")
+    parser.add_argument("--edge", action="store_true", help="Prefer Microsoft Edge")
     parser.add_argument("--no-window", action="store_true", help="Run background server only without opening UI")
     args = parser.parse_args(argv)
 
@@ -117,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.browser:
                 webbrowser.open(url)
             else:
-                launch_native_app_window(url)
+                launch_native_app_window(url, prefer_edge=args.edge)
         return 0
 
     # 2. Bind and Start Background HTTP Server
@@ -141,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.browser:
             webbrowser.open(url)
         else:
-            launch_native_app_window(url)
+            launch_native_app_window(url, prefer_edge=args.edge)
 
     # 4. Keep background server and auto-failover daemon alive
     try:
