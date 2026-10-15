@@ -372,8 +372,8 @@ class PromuxApiHandler(BaseHTTPRequestHandler):
 
         ok, msg = self.storage.switch_profile(name, restart_ide=restart_ide)
         if ok:
-            # Check and refresh quota for this newly activated account
-            self._fetch_and_cache_quota(name)
+            # Refresh quota in background thread for instant zero-lag response
+            threading.Thread(target=lambda: self._fetch_and_cache_quota(name), daemon=True).start()
             extra = " (Antigravity IDE restarted)" if restart_ide and AntigravityManager.is_running() else ""
             self.watcher.log_event("SUCCESS", f"Switched active account to '{name}'{extra}")
             self._send_json({"success": True, "message": f"{msg}{extra}", "active": name})
@@ -384,7 +384,7 @@ class PromuxApiHandler(BaseHTTPRequestHandler):
         restart_ide = body.get("restart_ide", True) if body else True
         ok, msg, target = self.smart_engine.smart_switch(restart_ide=restart_ide)
         if ok and target:
-            self._fetch_and_cache_quota(target)
+            threading.Thread(target=lambda: self._fetch_and_cache_quota(target), daemon=True).start()
             extra = " (Antigravity IDE restarted)" if restart_ide and AntigravityManager.is_running() else ""
             self.watcher.log_event("SUCCESS", f"Smart Switch rotated to '{target}'{extra}")
             self._send_json({"success": True, "message": f"{msg}{extra}", "target": target})

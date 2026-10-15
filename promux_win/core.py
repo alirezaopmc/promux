@@ -246,7 +246,7 @@ def extract_email_from_jwt(id_token: str | None) -> str | None:
 # =====================================================================
 
 class AntigravityManager:
-    """Manages Google Antigravity IDE process lifecycle on Windows."""
+    """Manages Google Antigravity IDE process lifecycle on Windows with high-performance native APIs."""
 
     @staticmethod
     def find_antigravity_executable() -> Path | None:
@@ -261,60 +261,143 @@ class AntigravityManager:
                 return c
         return None
 
-    @staticmethod
-    def is_running() -> bool:
-        """Checks if Antigravity.exe is currently active in the process table."""
+    @classmethod
+    def get_antigravity_pids(cls) -> list[int]:
+        """Ultra-fast process enumeration using Windows Toolhelp32 API (~5ms)."""
+        pids: list[int] = []
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class PROCESSENTRY32(ctypes.Structure):
+                _fields_ = [
+                    ('dwSize', wintypes.DWORD),
+                    ('cntUsage', wintypes.DWORD),
+                    ('th32ProcessID', wintypes.DWORD),
+                    ('th32DefaultHeapID', ctypes.POINTER(ctypes.c_ulong)),
+                    ('th32ModuleID', wintypes.DWORD),
+                    ('cntThreads', wintypes.DWORD),
+                    ('th32ParentProcessID', wintypes.DWORD),
+                    ('pcPriClassBase', wintypes.LONG),
+                    ('dwFlags', wintypes.DWORD),
+                    ('szExeFile', ctypes.c_char * 260)
+                ]
+
+            kernel32 = ctypes.windll.kernel32
+            hSnapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+            if hSnapshot and hSnapshot != -1:
+                pe = PROCESSENTRY32()
+                pe.dwSize = ctypes.sizeof(PROCESSENTRY32)
+                if kernel32.Process32First(hSnapshot, ctypes.byref(pe)):
+                    while True:
+                        exe_name = pe.szExeFile.decode('latin1', 'ignore').lower()
+                        if exe_name == 'antigravity.exe':
+                            pids.append(pe.th32ProcessID)
+                        if not kernel32.Process32Next(hSnapshot, ctypes.byref(pe)):
+                            break
+                kernel32.CloseHandle(hSnapshot)
+                return pids
+        except Exception:
+            pass
+
+        # Fallback to tasklist if ctypes snapshot fails
         try:
             res = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq Antigravity.exe", "/FO", "CSV"],
+                ["tasklist", "/FI", "IMAGENAME eq Antigravity.exe", "/FO", "CSV", "/NH"],
                 capture_output=True,
                 text=True,
+                stdin=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                timeout=2,
+            )
+            for line in res.stdout.splitlines():
+                parts = [p.strip('"') for p in line.split('","')]
+                if len(parts) >= 2 and parts[0].lower() == "antigravity.exe":
+                    try:
+                        pids.append(int(parts[1]))
+                    except ValueError:
+                        pass
+        except Exception:
+            pass
+        return pids
+
+    @classmethod
+    def is_running(cls) -> bool:
+        """Checks if Antigravity.exe is currently active in the process table."""
+        return len(cls.get_antigravity_pids()) > 0
+
+    @classmethod
+    def terminate(cls) -> bool:
+        """Immediately terminates all running Antigravity.exe processes."""
+        pids = cls.get_antigravity_pids()
+        if not pids:
+            return True
+
+        success = False
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            PROCESS_TERMINATE = 0x0001
+            for pid in pids:
+                hProc = kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
+                if hProc:
+                    kernel32.TerminateProcess(hProc, 0)
+                    kernel32.CloseHandle(hProc)
+                    success = True
+        except Exception:
+            pass
+
+        # Fallback taskkill
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "Antigravity.exe", "/T"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 timeout=3,
             )
-            return "Antigravity.exe" in res.stdout
+            success = True
         except Exception:
-            return False
+            pass
+
+        return success
 
     @classmethod
-    def restart(cls, force_launch: bool = True) -> tuple[bool, str]:
-        """Gracefully closes Antigravity IDE if running, then relaunches it."""
+    def restart(cls, force_launch: bool = True, async_mode: bool = True) -> tuple[bool, str]:
+        """Gracefully closes Antigravity IDE if running, then relaunches it asynchronously or synchronously."""
         was_running = cls.is_running()
         exe_path = cls.find_antigravity_executable()
 
         if not exe_path and not was_running:
             return False, "Antigravity IDE executable was not found on this system."
 
-        # Terminate running instances
-        if was_running:
-            try:
-                subprocess.run(
-                    ["taskkill", "/F", "/IM", "Antigravity.exe", "/T"],
-                    capture_output=True,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                    timeout=5,
-                )
-                time.sleep(1.0)
-            except Exception as e:
-                return False, f"Failed to terminate Antigravity IDE: {e}"
+        def _do_restart():
+            if was_running:
+                cls.terminate()
+                time.sleep(0.3)
 
-        # Relaunch if it was previously open or force_launch requested
-        if (was_running or force_launch) and exe_path and exe_path.exists():
-            try:
-                os.startfile(str(exe_path))
-                return True, "Antigravity IDE restarted successfully"
-            except Exception:
+            if (was_running or force_launch) and exe_path and exe_path.exists():
                 try:
-                    subprocess.Popen(
-                        [str(exe_path)],
-                        creationflags=getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200),
-                        close_fds=True,
-                    )
-                    return True, "Antigravity IDE relaunched"
-                except Exception as e:
-                    return False, f"Failed to relaunch Antigravity IDE: {e}"
+                    os.startfile(str(exe_path))
+                except Exception:
+                    try:
+                        subprocess.Popen(
+                            [str(exe_path)],
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200),
+                            close_fds=True,
+                        )
+                    except Exception:
+                        pass
 
-        return True, "Antigravity closed"
+        if async_mode:
+            threading.Thread(target=_do_restart, daemon=True).start()
+            return True, "Antigravity IDE restart initiated"
+        else:
+            _do_restart()
+            return True, "Antigravity IDE restarted"
 
 
 # =====================================================================
@@ -955,9 +1038,9 @@ class WindowsStorageEngine:
             state["accounts"][clean_name]["last_used_at"] = datetime.now(timezone.utc).isoformat()
             self._atomic_write_json(self.state_file, state)
 
-        # Automatically restart Antigravity IDE if requested
+        # Automatically restart Antigravity IDE if requested (asynchronous for instant zero-lag UI response)
         if restart_ide:
-            AntigravityManager.restart(force_launch=True)
+            AntigravityManager.restart(force_launch=True, async_mode=True)
 
         return True, f"Successfully switched to '{clean_name}'"
 

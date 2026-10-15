@@ -41,7 +41,7 @@ class AntigravityLogWatcher:
         self._thread: threading.Thread | None = None
         self._file_offsets: dict[str, int] = {}
         self.events_history: list[dict[str, str]] = []
-        self.prompt_on_exhaustion: bool = True
+        self.prompt_on_exhaustion: bool = False
         self.auto_restart_antigravity: bool = True
         self.pending_alert: dict[str, Any] | None = None
 

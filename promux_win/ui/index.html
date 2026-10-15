@@ -1085,7 +1085,7 @@
       accounts: [],
       live_session: null,
       watcher_running: false,
-      prompt_on_exhaustion: true,
+      prompt_on_exhaustion: false,
       auto_restart_antigravity: true,
       pending_alert: null,
       antigravity_running: false,
@@ -1422,20 +1422,32 @@
     // Switching Profiles & Smart Switch
     // =================================================================
     async function switchProfile(name) {
-      showToast(`Switching to '${name}'...`);
+      // Optimistic instant UI update for zero lag
+      if (state && state.accounts) {
+        state.active = name;
+        state.accounts.forEach(a => a.is_active = (a.name === name));
+        render();
+      }
+      showToast(`Switched to '${name}'`, 'info');
       const res = await apiCall('/api/switch', 'POST', { name, restart_ide: autoRestartIDE });
       if (res && res.success) {
         showToast(res.message || `Switched to '${name}'`, 'success');
         await loadStatus();
       } else {
         showToast(res ? res.error : 'Switch failed', 'error');
+        await loadStatus();
       }
     }
 
     async function triggerSmartSwitch() {
-      showToast('Evaluating account quotas...');
+      showToast('Evaluating account quotas...', 'info');
       const res = await apiCall('/api/smart_switch', 'POST', { restart_ide: autoRestartIDE });
       if (res && res.success) {
+        if (state && state.accounts && res.target) {
+          state.active = res.target;
+          state.accounts.forEach(a => a.is_active = (a.name === res.target));
+          render();
+        }
         showToast(res.message || `Smart Switch rotated to: ${res.target}`, 'success');
         await loadStatus();
       } else {
