@@ -119,7 +119,10 @@ All tool data lives under `~/.promux/tools/<tool>/`, providing a uniform layout.
 
 ## Windows Edition (Desktop GUI & Credential Manager)
 
-For Windows systems, Promux provides a native Windows edition with a sleek, modern desktop interface:
+Promux provides native first-class Windows support with an ultra-modern, dark glassmorphic desktop GUI and deep Antigravity IDE integration.
+
+👉 **Full Windows Guide & Architecture:** See [docs/WINDOWS.md](docs/WINDOWS.md)
+
 - **Windows Credential Manager Integration:** Hot-swaps credentials in `gemini:antigravity` via native Win32 `advapi32.dll` APIs and synchronizes CLI token files simultaneously.
 - **Ultra-Modern Desktop GUI:** Standalone dark glassmorphic interface with real-time quota visualizations, live countdown timers, and active status indicators.
 - **1-Click Google Sign-In:** Direct OAuth authorization flow via system browser with automatic token exchange and vaulting.
