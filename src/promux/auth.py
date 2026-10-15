@@ -321,10 +321,28 @@ def _refresh_token_file(
     storage: StorageEngine | None = None,
 ) -> str | None:
     """Attempt to refresh an expired token using its refresh_token or agy fallback."""
+    import sys
+    cli_mod = sys.modules.get("promux.cli")
+    if cli_mod:
+        cli_refresh = getattr(cli_mod, "_refresh_token_file", None)
+        if cli_refresh is not None and getattr(cli_refresh, "__code__", None) != _refresh_token_file.__code__:
+            try:
+                return cli_refresh(token_path, token_data, storage=storage)
+            except TypeError:
+                return cli_refresh(token_path, token_data)
+
     _set_last_refresh_method("failed")
     _set_last_refresh_revoked(False)
+
+    native_fn = getattr(cli_mod, "_refresh_token_native", _refresh_token_native) if cli_mod else _refresh_token_native
+    fallback_fn = (
+        getattr(cli_mod, "_refresh_token_fallback_agy", _refresh_token_fallback_agy)
+        if cli_mod
+        else _refresh_token_fallback_agy
+    )
+
     try:
-        refreshed = _refresh_token_native(token_path, token_data)
+        refreshed = native_fn(token_path, token_data)
     except Exception as e:
         if "invalid_grant" in str(e).lower():
             _set_last_refresh_revoked(True)
@@ -337,7 +355,7 @@ def _refresh_token_file(
         _set_last_refresh_method("revoked")
         return None
     if storage is not None:
-        refreshed = _refresh_token_fallback_agy(token_path, storage)
+        refreshed = fallback_fn(token_path, storage)
         if refreshed:
             _set_last_refresh_method("fallback (agy)")
             return refreshed
@@ -349,12 +367,25 @@ def get_or_refresh_access_token(
     storage: StorageEngine | None = None,
 ) -> str | None:
     """Get access token, refreshing it if expired and refresh_token is present."""
+    import sys
+    cli_mod = sys.modules.get("promux.cli")
+    if cli_mod:
+        cli_fn = getattr(cli_mod, "_get_or_refresh_access_token", None)
+        if cli_fn is not None and getattr(cli_fn, "__module__", "") != "promux.auth":
+            return cli_fn(token_path, storage=storage)
+
     token_data = read_token_data(token_path)
     if not token_data:
         return None
     access_token = extract_access_token(token_data)
     if is_token_expired(token_data, buffer_seconds=DEFAULT_TOKEN_EXPIRY_BUFFER_SECONDS):
-        refreshed = _refresh_token_file(token_path, token_data, storage=storage)
+        refresh_file_fn = (
+            getattr(cli_mod, "_refresh_token_file", _refresh_token_file)
+            if cli_mod
+            else _refresh_token_file
+        )
+        refreshed = refresh_file_fn(token_path, token_data, storage=storage)
         if refreshed:
             return refreshed
     return access_token
+

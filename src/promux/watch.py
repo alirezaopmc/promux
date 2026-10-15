@@ -155,7 +155,7 @@ class LogWatcher:
         if storage is None:
             return []
 
-        from . import cli
+        from . import auth
 
         active_profile = storage.get_active_profile()
         renewed_accounts: list[str] = []
@@ -167,32 +167,32 @@ class LogWatcher:
 
             if is_active and storage.live_token.exists():
                 token_path = storage.live_token
-                token_data = cli._read_token_data(token_path)
+                token_data = auth.read_token_data(token_path)
                 if not token_data and vault_token_path.exists():
                     token_path = vault_token_path
-                    token_data = cli._read_token_data(token_path)
+                    token_data = auth.read_token_data(token_path)
             else:
                 token_path = vault_token_path
-                token_data = cli._read_token_data(token_path)
+                token_data = auth.read_token_data(token_path)
 
             if not token_data:
                 continue
 
-            if cli._is_token_expired(token_data, buffer_seconds=expiry_threshold_seconds):
-                refreshed = cli._refresh_token_file(token_path, token_data, storage=storage)
+            if auth.is_token_expired(token_data, buffer_seconds=expiry_threshold_seconds):
+                refreshed = auth._refresh_token_file(token_path, token_data, storage=storage)
                 if refreshed:
                     if is_active:
                         if token_path == storage.live_token:
-                            cli._sync_active_tokens(storage.live_token, vault_token_path)
+                            auth.sync_active_tokens(storage.live_token, vault_token_path)
                         else:
-                            cli._sync_active_tokens(vault_token_path, storage.live_token)
+                            auth.sync_active_tokens(vault_token_path, storage.live_token)
                     renewed_accounts.append(name)
             elif is_active and token_path == storage.live_token and vault_token_path.exists():
-                vault_data = cli._read_token_data(vault_token_path)
-                if vault_data and cli._is_token_expired(
+                vault_data = auth.read_token_data(vault_token_path)
+                if vault_data and auth.is_token_expired(
                     vault_data, buffer_seconds=expiry_threshold_seconds
                 ):
-                    cli._sync_active_tokens(storage.live_token, vault_token_path)
+                    auth.sync_active_tokens(storage.live_token, vault_token_path)
 
         return renewed_accounts
 

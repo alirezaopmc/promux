@@ -92,7 +92,8 @@ class StorageEngine:
             dest_token = acct_dir / "antigravity-oauth-token"
             tmp_dest = dest_token.with_suffix(".tmp")
             shutil.copy2(self.live_token, tmp_dest)
-            tmp_dest.chmod(0o600)
+            if os.name != "nt":
+                tmp_dest.chmod(0o600)
             os.replace(tmp_dest, dest_token)
 
             now = datetime.now(timezone.utc)
@@ -139,14 +140,15 @@ class StorageEngine:
                     if should_sync:
                         tmp_prev = prev_vault_token.with_suffix(".tmp")
                         shutil.copy2(self.live_token, tmp_prev)
-                        tmp_prev.chmod(0o600)
+                        if os.name != "nt":
+                            tmp_prev.chmod(0o600)
                         os.replace(tmp_prev, prev_vault_token)
 
             # Auto-refresh src_token if expired before hot-swapping into live_token
             try:
-                from .cli import _get_or_refresh_access_token
+                from .auth import get_or_refresh_access_token
 
-                refreshed_token = _get_or_refresh_access_token(src_token, storage=self)
+                refreshed_token = get_or_refresh_access_token(src_token, storage=self)
                 if refreshed_token:
                     try:
                         src_data = json.loads(src_token.read_text(encoding="utf-8"))
@@ -155,7 +157,8 @@ class StorageEngine:
                             tmp_src = src_token.with_suffix(".tmp")
                             with open(tmp_src, "w", encoding="utf-8") as f:
                                 json.dump(src_data, f, indent=2)
-                            tmp_src.chmod(0o600)
+                            if os.name != "nt":
+                                tmp_src.chmod(0o600)
                             os.replace(tmp_src, src_token)
                     except Exception:
                         pass
@@ -166,7 +169,8 @@ class StorageEngine:
             self.live_token.parent.mkdir(parents=True, exist_ok=True)
             tmp_token = self.live_token.with_suffix(".tmp")
             shutil.copy2(src_token, tmp_token)
-            tmp_token.chmod(0o600)
+            if os.name != "nt":
+                tmp_token.chmod(0o600)
             os.replace(tmp_token, self.live_token)
 
             state["active"] = name
