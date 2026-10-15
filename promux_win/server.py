@@ -25,6 +25,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .core import (
+    AntigravityManager,
     OAuthFlowManager,
     OAuthRefresher,
     QuotaClient,
@@ -112,7 +113,17 @@ class PromuxApiHandler(BaseHTTPRequestHandler):
         elif path == "/api/switch":
             self._handle_switch_profile(body)
         elif path == "/api/smart_switch":
-            self._handle_smart_switch()
+            self._handle_smart_switch(body)
+        elif path == "/api/account/update":
+            self._handle_account_update(body)
+        elif path == "/api/restart_antigravity":
+            self._handle_restart_antigravity()
+        elif path == "/api/alert/confirm":
+            self._handle_alert_confirm(body)
+        elif path == "/api/alert/dismiss":
+            self._handle_alert_dismiss()
+        elif path == "/api/toggle_setting":
+            self._handle_toggle_setting(body)
         elif path == "/api/refresh_quota":
             self._handle_refresh_quota(body)
         elif path == "/api/refresh_token":
@@ -146,22 +157,42 @@ class PromuxApiHandler(BaseHTTPRequestHandler):
         return {}
 
     def _serve_static(self, rel_path: str) -> None:
-        if rel_path in ["", "/", "/index.html"]:
+        clean_path = rel_path.lstrip("/\\").split("?")[0]
+        if clean_path in ["", "index.html"]:
             target_file = UI_DIR / "index.html"
         else:
-            clean_path = rel_path.lstrip("/\\")
             target_file = UI_DIR / clean_path
+
+        # Fallback for icon if not directly in UI_DIR
+        if clean_path == "favicon.ico" and not target_file.exists():
+            root_ico = Path(__file__).parent.parent / "promux.ico"
+            if root_ico.exists():
+                target_file = root_ico
 
         if not target_file.exists() or not target_file.is_file():
             target_file = UI_DIR / "index.html"
 
-        if target_file.exists():
-            mime_type, _ = mimetypes.guess_type(str(target_file))
+        if target_file.exists() and target_file.is_file():
+            ext = target_file.suffix.lower()
+            mime_map = {
+                ".ico": "image/x-icon",
+                ".png": "image/png",
+                ".json": "application/json",
+                ".html": "text/html; charset=utf-8",
+                ".css": "text/css; charset=utf-8",
+                ".js": "application/javascript; charset=utf-8",
+                ".svg": "image/svg+xml",
+            }
+            mime_type = mime_map.get(ext)
+            if not mime_type:
+                mime_type, _ = mimetypes.guess_type(str(target_file))
             mime_type = mime_type or "text/html; charset=utf-8"
+
             content = target_file.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", mime_type)
             self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(content)
         else:
@@ -230,6 +261,10 @@ class PromuxApiHandler(BaseHTTPRequestHandler):
         live = self.storage.get_live_token_data()
         live_email = extract_email_from_jwt(live.get("id_token")) if live else None
 
+        pending_alert = getattr(self.watcher, "pending_alert", None)
+        antigravity_running = AntigravityManager.is_running()
+        antigravity_installed = AntigravityManager.find_antigravity_executable() is not None
+
         self._send_json({
             "active": active_name,
             "accounts": account_list,
@@ -238,44 +273,108 @@ class PromuxApiHandler(BaseHTTPRequestHandler):
                 "email": live_email,
             },
             "watcher_running": self.watcher.running,
-            "events": self.watcher.events_history[-10:],
+            "prompt_on_exhaustion": getattr(self.watcher, "prompt_on_exhaustion", True),
+            "auto_restart_antigravity": getattr(self.watcher, "auto_restart_antigravity", True),
+            "pending_alert": pending_alert,
+            "antigravity_running": antigravity_running,
+            "antigravity_installed": antigravity_installed,
+            "events": self.watcher.events_history[-15:],
         })
 
     def _handle_save_profile(self, body: dict[str, Any]) -> None:
         name = body.get("name", "").strip()
+        alias = body.get("alias", "").strip() or None
         if not name:
             self._send_json({"error": "Profile name is required"}, status=400)
             return
 
         try:
             token_data = body.get("token_data")
-            acct = self.storage.save_profile(name=name, token_data=token_data)
+            acct = self.storage.save_profile(name=name, token_data=token_data, alias=alias)
             self._fetch_and_cache_quota(name)
             self._send_json({"success": True, "account": acct.to_dict()})
         except Exception as e:
             self._send_json({"error": str(e)}, status=500)
 
+    def _handle_account_update(self, body: dict[str, Any]) -> None:
+        name = body.get("name", "").strip()
+        new_name = body.get("new_name", name).strip()
+        alias = body.get("alias")
+        if not name:
+            self._send_json({"error": "Current account name is required"}, status=400)
+            return
+
+        ok, msg = self.storage.rename_account(name, new_name, alias=alias)
+        if ok:
+            with self._cache_lock:
+                if name in self.quota_cache and new_name != name:
+                    self.quota_cache[new_name] = self.quota_cache.pop(name)
+            self.watcher.log_event("INFO", f"Updated account '{name}' -> '{new_name}' (alias: {alias or 'None'})")
+            self._send_json({"success": True, "message": msg, "name": new_name, "alias": alias})
+        else:
+            self._send_json({"error": msg}, status=400)
+
+    def _handle_restart_antigravity(self) -> None:
+        ok, msg = AntigravityManager.restart(force_launch=True)
+        if ok:
+            self.watcher.log_event("SUCCESS", "Antigravity IDE restarted manually via Promux.")
+            self._send_json({"success": True, "message": msg})
+        else:
+            self.watcher.log_event("ERROR", f"Failed to restart Antigravity IDE: {msg}")
+            self._send_json({"error": msg}, status=500)
+
+    def _handle_alert_confirm(self, body: dict[str, Any]) -> None:
+        target_account = body.get("target_account")
+        restart_ide = body.get("restart_ide", True)
+        ok, msg = self.watcher.confirm_alert(target_account=target_account, restart_ide=restart_ide)
+        if ok:
+            if target_account:
+                self._fetch_and_cache_quota(target_account)
+            self._send_json({"success": True, "message": msg})
+        else:
+            self._send_json({"error": msg}, status=500)
+
+    def _handle_alert_dismiss(self) -> None:
+        self.watcher.dismiss_alert()
+        self.watcher.log_event("INFO", "Exhaustion alert dismissed by user.")
+        self._send_json({"success": True})
+
+    def _handle_toggle_setting(self, body: dict[str, Any]) -> None:
+        if "prompt_on_exhaustion" in body:
+            self.watcher.prompt_on_exhaustion = bool(body["prompt_on_exhaustion"])
+        if "auto_restart_antigravity" in body:
+            self.watcher.auto_restart_antigravity = bool(body["auto_restart_antigravity"])
+        self._send_json({
+            "success": True,
+            "prompt_on_exhaustion": self.watcher.prompt_on_exhaustion,
+            "auto_restart_antigravity": self.watcher.auto_restart_antigravity,
+        })
+
     def _handle_switch_profile(self, body: dict[str, Any]) -> None:
         name = body.get("name", "").strip()
+        restart_ide = body.get("restart_ide", True)
         if not name:
             self._send_json({"error": "Account name is required"}, status=400)
             return
 
-        ok, msg = self.storage.switch_profile(name)
+        ok, msg = self.storage.switch_profile(name, restart_ide=restart_ide)
         if ok:
             # Check and refresh quota for this newly activated account
             self._fetch_and_cache_quota(name)
-            self.watcher.log_event("SUCCESS", f"Switched active account to '{name}'")
-            self._send_json({"success": True, "message": msg, "active": name})
+            extra = " (Antigravity IDE restarted)" if restart_ide and AntigravityManager.is_running() else ""
+            self.watcher.log_event("SUCCESS", f"Switched active account to '{name}'{extra}")
+            self._send_json({"success": True, "message": f"{msg}{extra}", "active": name})
         else:
             self._send_json({"error": msg}, status=400)
 
-    def _handle_smart_switch(self) -> None:
-        ok, msg, target = self.smart_engine.smart_switch()
+    def _handle_smart_switch(self, body: dict[str, Any] | None = None) -> None:
+        restart_ide = body.get("restart_ide", True) if body else True
+        ok, msg, target = self.smart_engine.smart_switch(restart_ide=restart_ide)
         if ok and target:
             self._fetch_and_cache_quota(target)
-            self.watcher.log_event("SUCCESS", f"Smart Switch rotated to '{target}'")
-            self._send_json({"success": True, "message": msg, "target": target})
+            extra = " (Antigravity IDE restarted)" if restart_ide and AntigravityManager.is_running() else ""
+            self.watcher.log_event("SUCCESS", f"Smart Switch rotated to '{target}'{extra}")
+            self._send_json({"success": True, "message": f"{msg}{extra}", "target": target})
         else:
             self._send_json({"error": msg}, status=400)
 

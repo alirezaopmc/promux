@@ -13,7 +13,9 @@ from ctypes import wintypes
 import json
 import math
 import os
+import re
 import shutil
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -107,6 +109,7 @@ class AccountMeta:
     email: str | None = None
     project_id: str | None = None
     plan_type: str = "STANDARD"
+    alias: str | None = None
 
     @property
     def is_cooldown(self) -> bool:
@@ -137,6 +140,7 @@ class AccountMeta:
             "email": self.email,
             "project_id": self.project_id,
             "plan_type": self.plan_type,
+            "alias": self.alias,
         }
 
     @classmethod
@@ -150,6 +154,7 @@ class AccountMeta:
             email=data.get("email"),
             project_id=data.get("project_id"),
             plan_type=data.get("plan_type", "STANDARD"),
+            alias=data.get("alias"),
         )
 
 
@@ -236,7 +241,80 @@ def extract_email_from_jwt(id_token: str | None) -> str | None:
             return data.get("email")
     except Exception:
         pass
-    return None
+# =====================================================================
+# Antigravity Process & Lifecycle Manager
+# =====================================================================
+
+class AntigravityManager:
+    """Manages Google Antigravity IDE process lifecycle on Windows."""
+
+    @staticmethod
+    def find_antigravity_executable() -> Path | None:
+        """Locates the primary Antigravity IDE executable on the system."""
+        candidates = [
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "antigravity" / "Antigravity.exe",
+            Path(os.environ.get("PROGRAMFILES", "")) / "antigravity" / "Antigravity.exe",
+            Path(os.environ.get("PROGRAMFILES(X86)", "")) / "antigravity" / "Antigravity.exe",
+        ]
+        for c in candidates:
+            if c.exists() and c.is_file():
+                return c
+        return None
+
+    @staticmethod
+    def is_running() -> bool:
+        """Checks if Antigravity.exe is currently active in the process table."""
+        try:
+            res = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq Antigravity.exe", "/FO", "CSV"],
+                capture_output=True,
+                text=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                timeout=3,
+            )
+            return "Antigravity.exe" in res.stdout
+        except Exception:
+            return False
+
+    @classmethod
+    def restart(cls, force_launch: bool = True) -> tuple[bool, str]:
+        """Gracefully closes Antigravity IDE if running, then relaunches it."""
+        was_running = cls.is_running()
+        exe_path = cls.find_antigravity_executable()
+
+        if not exe_path and not was_running:
+            return False, "Antigravity IDE executable was not found on this system."
+
+        # Terminate running instances
+        if was_running:
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/IM", "Antigravity.exe", "/T"],
+                    capture_output=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    timeout=5,
+                )
+                time.sleep(1.0)
+            except Exception as e:
+                return False, f"Failed to terminate Antigravity IDE: {e}"
+
+        # Relaunch if it was previously open or force_launch requested
+        if (was_running or force_launch) and exe_path and exe_path.exists():
+            try:
+                os.startfile(str(exe_path))
+                return True, "Antigravity IDE restarted successfully"
+            except Exception:
+                try:
+                    subprocess.Popen(
+                        [str(exe_path)],
+                        creationflags=getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200),
+                        close_fds=True,
+                    )
+                    return True, "Antigravity IDE relaunched"
+                except Exception as e:
+                    return False, f"Failed to relaunch Antigravity IDE: {e}"
+
+        return True, "Antigravity closed"
 
 
 # =====================================================================
@@ -729,6 +807,7 @@ class WindowsStorageEngine:
         email: str | None = None,
         project_id: str | None = None,
         plan_type: str = "STANDARD",
+        alias: str | None = None,
     ) -> AccountMeta:
         """Saves or updates a profile in the vault."""
         clean_name = name.strip()
@@ -777,6 +856,7 @@ class WindowsStorageEngine:
                 email=email,
                 project_id=project_id,
                 plan_type=plan_type,
+                alias=alias.strip() if alias else None,
             )
             state.setdefault("accounts", {})[clean_name] = acct.to_dict()
             if not state.get("active"):
@@ -785,7 +865,61 @@ class WindowsStorageEngine:
 
         return acct
 
-    def switch_profile(self, name: str) -> tuple[bool, str]:
+    def set_account_alias(self, name: str, alias: str | None) -> bool:
+        """Sets custom display name/alias for an account."""
+        clean_name = name.strip()
+        with windows_file_lock(self.lock_file):
+            state = self.load_state()
+            if clean_name not in state.get("accounts", {}):
+                return False
+            clean_alias = alias.strip() if alias else None
+            state["accounts"][clean_name]["alias"] = clean_alias
+            self._atomic_write_json(self.state_file, state)
+        return True
+
+    def rename_account(self, old_name: str, new_name: str, alias: str | None = None) -> tuple[bool, str]:
+        """Renames account profile directory, updates state, and sets alias."""
+        old_clean = old_name.strip()
+        new_clean = new_name.strip()
+        if not new_clean:
+            return False, "New account name cannot be empty."
+
+        if any(c in new_clean for c in r'\/:*?"<>|'):
+            return False, "Account name contains invalid filename characters."
+
+        with windows_file_lock(self.lock_file):
+            state = self.load_state()
+            accts = state.get("accounts", {})
+            if old_clean not in accts:
+                return False, f"Account '{old_clean}' does not exist."
+
+            if new_clean != old_clean and new_clean in accts:
+                return False, f"An account named '{new_clean}' already exists."
+
+            if new_clean != old_clean:
+                old_dir = self.accounts_dir / old_clean
+                new_dir = self.accounts_dir / new_clean
+                if old_dir.exists():
+                    new_dir.parent.mkdir(parents=True, exist_ok=True)
+                    self._safe_replace(old_dir, new_dir)
+
+                data = accts.pop(old_clean)
+                data["name"] = new_clean
+                if alias is not None:
+                    data["alias"] = alias.strip() if alias else None
+                accts[new_clean] = data
+
+                if state.get("active") == old_clean:
+                    state["active"] = new_clean
+            else:
+                if alias is not None:
+                    accts[old_clean]["alias"] = alias.strip() if alias else None
+
+            self._atomic_write_json(self.state_file, state)
+
+        return True, f"Account updated to '{new_clean}'"
+
+    def switch_profile(self, name: str, restart_ide: bool = False) -> tuple[bool, str]:
         """Switches active profile to target account, syncing both Credential Manager & files."""
         clean_name = name.strip()
         token_data = self.read_account_token(clean_name)
@@ -820,6 +954,10 @@ class WindowsStorageEngine:
             state["active"] = clean_name
             state["accounts"][clean_name]["last_used_at"] = datetime.now(timezone.utc).isoformat()
             self._atomic_write_json(self.state_file, state)
+
+        # Automatically restart Antigravity IDE if requested
+        if restart_ide:
+            AntigravityManager.restart(force_launch=True)
 
         return True, f"Successfully switched to '{clean_name}'"
 
@@ -911,7 +1049,7 @@ class SmartSwitchEngine:
         results.sort(key=lambda r: (r["is_eligible"], r["score"]), reverse=True)
         return results
 
-    def smart_switch(self) -> tuple[bool, str, str | None]:
+    def smart_switch(self, restart_ide: bool = False) -> tuple[bool, str, str | None]:
         candidates = self.evaluate_candidates()
         eligible = [c for c in candidates if c["is_eligible"]]
         if not eligible:
@@ -919,5 +1057,5 @@ class SmartSwitchEngine:
 
         best = eligible[0]
         target_name = best["account"].name
-        ok, msg = self.storage.switch_profile(target_name)
+        ok, msg = self.storage.switch_profile(target_name, restart_ide=restart_ide)
         return ok, msg, target_name

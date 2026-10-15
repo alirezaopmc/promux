@@ -55,6 +55,14 @@ def find_free_port(preferred: int = DEFAULT_PORT) -> int:
 
 def launch_native_app_window(url: str) -> bool:
     """Launch native borderless application window using Chrome or Edge, or fallback to browser."""
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("alirezaopmc.promux.windows.gui")
+    except Exception:
+        pass
+
+    user_data_dir = os.path.expandvars(r"%LOCALAPPDATA%\Promux\BrowserProfile")
+
     candidates = [
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
@@ -71,17 +79,17 @@ def launch_native_app_window(url: str) -> bool:
             cmd = [
                 exe,
                 f"--app={url}",
-                "--window-size=1180,780",
+                f"--user-data-dir={user_data_dir}",
+                "--app-id=promux_desktop_gui",
+                "--window-size=1120,740",
                 "--no-first-run",
                 "--no-default-browser-check",
             ]
             try:
                 proc = subprocess.Popen(cmd)
-                # Check if it failed immediately (e.g. exit code 21)
                 time.sleep(0.3)
                 poll = proc.poll()
                 if poll is not None and poll != 0:
-                    # Try next candidate
                     continue
                 return True
             except Exception:

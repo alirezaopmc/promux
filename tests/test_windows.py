@@ -96,3 +96,45 @@ def test_windows_storage_engine(tmp_path):
     # Remove
     assert engine.remove_profile("test_profile") is True
     assert len(engine.list_accounts()) == 0
+
+
+def test_account_alias_and_rename(tmp_path):
+    promux_home = tmp_path / ".promux"
+    engine = WindowsStorageEngine(promux_home=promux_home)
+
+    token_data = {
+        "token": {
+            "access_token": "ya29.fake2",
+            "refresh_token": "fake_refresh2",
+            "expiry": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        },
+        "auth_method": "oauth",
+    }
+
+    # Save with alias
+    acct = engine.save_profile("work_id", token_data=token_data, email="work@company.com", alias="Work Laptop")
+    assert acct.alias == "Work Laptop"
+
+    # Update alias
+    assert engine.set_account_alias("work_id", "Office Primary") is True
+    accts = engine.list_accounts()
+    assert accts[0].alias == "Office Primary"
+
+    # Rename account
+    ok, msg = engine.rename_account("work_id", "office_id", alias="Office Desktop")
+    assert ok is True
+    accts = engine.list_accounts()
+    assert len(accts) == 1
+    assert accts[0].name == "office_id"
+    assert accts[0].alias == "Office Desktop"
+
+
+def test_antigravity_manager():
+    from promux_win.core import AntigravityManager
+    # Should run without throwing errors
+    is_run = AntigravityManager.is_running()
+    assert isinstance(is_run, bool)
+    exe = AntigravityManager.find_antigravity_executable()
+    if exe is not None:
+        assert exe.exists()
+
