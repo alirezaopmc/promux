@@ -5,7 +5,6 @@ from __future__ import annotations
 from . import __version__
 from .colors import bold, cyan, dim, green, is_color_enabled, yellow
 
-
 # ---------------------------------------------------------------------------
 # Help content catalogue
 # ---------------------------------------------------------------------------
@@ -45,12 +44,18 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
 # Per-subcommand descriptions (used by print_subcommand_help)
 COMMAND_DETAILS: dict[str, str] = {
     "list": "List all accounts saved in the promux vault.",
-    "switch": "Hot-swap the active profile, or auto-switch to highest quota with --smart (supports --no-cache).",
+    "switch": (
+        "Hot-swap the active profile, or auto-switch to highest quota with --smart"
+        " (supports --no-cache)."
+    ),
     "save": "Save the current active credentials as a named profile in the vault.",
     "next": "Rotate to the next eligible standby profile in round-robin order.",
     "remove": "Delete a saved profile and its associated token from the vault.",
     "whoami": "Print the currently active profile name, email, and token expiry.",
-    "quota": "Show Cloud Code Assist quota status for all (or a specific) profile (supports --no-cache).",
+    "quota": (
+        "Show Cloud Code Assist quota status for all (or a specific) profile"
+        " (supports --no-cache)."
+    ),
     "refresh": "Force-refresh OAuth access tokens for vault accounts.",
     "watch": "Start the reactive log-tailer daemon; auto-rotates on quota exhaustion.",
     "tools": "List registered tool adapters and their storage paths.",

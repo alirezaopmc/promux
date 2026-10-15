@@ -298,6 +298,7 @@ def test_log_watcher_dynamic_log_discovery(tmp_path):
 def test_watch_proactive_token_renewal(tmp_path, monkeypatch):
     import json
     from datetime import datetime, timedelta, timezone
+
     from promux.failover import FailoverEngine
     from promux.storage import StorageEngine
 
@@ -339,6 +340,7 @@ def test_watch_proactive_token_renewal(tmp_path, monkeypatch):
 def test_watch_check_and_renew_tokens_active_profile_sync(tmp_path, monkeypatch):
     import json
     from datetime import datetime, timedelta, timezone
+
     from promux.failover import FailoverEngine
     from promux.storage import StorageEngine
 
@@ -397,6 +399,7 @@ def test_watch_check_and_renew_tokens_active_profile_sync(tmp_path, monkeypatch)
 def test_watch_check_and_renew_tokens_skips_valid_tokens(tmp_path, monkeypatch):
     import json
     from datetime import datetime, timedelta, timezone
+
     from promux.failover import FailoverEngine
     from promux.storage import StorageEngine
 
@@ -462,6 +465,7 @@ def test_watch_run_forever_invokes_check_and_renew():
 def test_watch_check_and_renew_tokens_standby_account(tmp_path, monkeypatch):
     import json
     from datetime import datetime, timedelta, timezone
+
     from promux.failover import FailoverEngine
     from promux.storage import StorageEngine
 

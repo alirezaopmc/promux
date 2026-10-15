@@ -2,6 +2,7 @@ import json
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
 import pytest
 
 from promux.cache import QuotaCache

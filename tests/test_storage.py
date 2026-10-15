@@ -274,7 +274,6 @@ def test_storage_transaction_context_manager(tmp_path):
 
 
 def test_switch_profile_auto_refreshes_expired_target(tmp_path, sample_token_dict, monkeypatch):
-    from datetime import datetime, timezone
     from promux.storage import StorageEngine
 
     promux_home = tmp_path / ".promux"
@@ -300,7 +299,10 @@ def test_switch_profile_auto_refreshes_expired_target(tmp_path, sample_token_dic
     storage.switch_profile("profile_a")
 
     # Mock refresh to return refreshed token for profile_b
-    monkeypatch.setattr("promux.cli._get_or_refresh_access_token", lambda p, storage=None: "new_b_token")
+    monkeypatch.setattr(
+        "promux.cli._get_or_refresh_access_token",
+        lambda p, storage=None: "new_b_token",
+    )
 
     # Switch to profile B - should auto-refresh
     success = storage.switch_profile("profile_b")
@@ -389,6 +391,7 @@ def test_switch_profile_refresh_failure_still_switches(tmp_path, sample_token_di
 
 def test_switch_profile_fallback_agy_renewal(tmp_path, sample_token_dict, monkeypatch):
     import subprocess
+
     from promux.storage import StorageEngine
 
     promux_home = tmp_path / ".promux"

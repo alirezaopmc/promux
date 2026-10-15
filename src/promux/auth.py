@@ -261,7 +261,10 @@ def _refresh_token_fallback_agy(token_path: Path, storage: StorageEngine) -> str
                 try:
                     subprocess.run(["agy", "models"], capture_output=True, timeout=10)
                 except (subprocess.SubprocessError, OSError):
-                    logger.debug("subprocess agy models failed for same-path refresh", exc_info=True)
+                    logger.debug(
+                        "subprocess agy models failed for same-path refresh",
+                        exc_info=True,
+                    )
                 new_data = read_token_data(storage.live_token)
                 new_acc = extract_access_token(new_data)
                 new_exp = extract_expiry(new_data)

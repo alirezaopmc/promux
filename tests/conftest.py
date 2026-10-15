@@ -24,6 +24,7 @@ def fake_promux_home(tmp_path):
 @pytest.fixture
 def storage_with_profiles(tmp_path, sample_token_dict):
     import json
+
     from promux.adapters.agy import AgyAdapter
 
     promux_home = tmp_path / ".promux"

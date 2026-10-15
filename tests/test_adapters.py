@@ -1,11 +1,12 @@
 from pathlib import Path
+
 import pytest
 
+from promux.adapters import get_default_registry
 from promux.adapters.agy import AgyAdapter
 from promux.adapters.base import BaseToolAdapter
 from promux.adapters.registry import ToolRegistry
 from promux.adapters.stubs import ClaudeAdapter, CodexAdapter, CursorAdapter
-from promux.adapters import get_default_registry
 from promux.constants import PROMUX_HOME
 from promux.storage import StorageEngine
 

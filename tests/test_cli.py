@@ -909,6 +909,7 @@ def test_cli_quota_all_profiles_with_isolated_error(
 
 def test_constants_default_credentials(monkeypatch):
     import importlib
+
     import promux.constants
 
     monkeypatch.delenv("PROMUX_OAUTH_CLIENT_ID", raising=False)
@@ -925,6 +926,7 @@ def test_constants_default_credentials(monkeypatch):
 
 def test_constants_env_override(monkeypatch):
     import importlib
+
     import promux.constants
 
     monkeypatch.setenv("PROMUX_OAUTH_CLIENT_ID", "custom-client-id")
@@ -939,6 +941,7 @@ def test_constants_env_override(monkeypatch):
 
 def test_is_token_expired_buffer():
     from datetime import datetime, timedelta, timezone
+
     from promux.cli import _is_token_expired
 
     now = datetime.now(timezone.utc)
@@ -1071,6 +1074,7 @@ def test_native_refresh_failure_handling(tmp_path, monkeypatch):
 
 def test_get_or_refresh_access_token_uses_buffer(tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
+
     from promux.cli import _get_or_refresh_access_token
 
     token_path = tmp_path / "test-token"
@@ -1093,6 +1097,7 @@ def test_get_or_refresh_access_token_uses_buffer(tmp_path, monkeypatch):
 
 def test_refresh_token_fallback_agy_success(tmp_path, monkeypatch):
     import subprocess
+
     from promux.cli import _refresh_token_fallback_agy, get_storage
 
     promux_home = tmp_path / ".promux"
@@ -1166,6 +1171,7 @@ def test_refresh_token_fallback_agy_no_token_file(tmp_path, monkeypatch):
 
 def test_refresh_token_fallback_agy_when_live_did_not_exist(tmp_path, monkeypatch):
     import subprocess
+
     from promux.cli import _refresh_token_fallback_agy, get_storage
 
     promux_home = tmp_path / ".promux"
@@ -1206,6 +1212,7 @@ def test_refresh_token_fallback_agy_when_live_did_not_exist(tmp_path, monkeypatc
 
 def test_refresh_token_fallback_agy_failure_or_timeout(tmp_path, monkeypatch):
     import subprocess
+
     from promux.cli import _refresh_token_fallback_agy, get_storage
 
     promux_home = tmp_path / ".promux"
@@ -1244,6 +1251,7 @@ def test_refresh_token_fallback_agy_failure_or_timeout(tmp_path, monkeypatch):
 
 def test_refresh_token_fallback_agy_same_file(tmp_path, monkeypatch):
     import subprocess
+
     from promux.cli import _refresh_token_fallback_agy, get_storage
 
     promux_home = tmp_path / ".promux"
@@ -1408,7 +1416,7 @@ def test_cli_refresh_nonexistent_account(tmp_path, sample_token_dict, monkeypatc
 
 def test_cli_refresh_syncs_to_active_live_token(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
-    from promux.cli import main, get_storage
+    from promux.cli import get_storage, main
 
     assert main(["save", "active_acct", "--email", "act@test.com"]) == 0
     capsys.readouterr()
@@ -1474,7 +1482,7 @@ def test_cli_refresh_failure_returns_1(tmp_path, sample_token_dict, monkeypatch,
 
 def test_cli_refresh_missing_token_file(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
-    from promux.cli import main, get_storage
+    from promux.cli import get_storage, main
 
     assert main(["save", "ghost", "--email", "ghost@test.com"]) == 0
     capsys.readouterr()
@@ -1553,7 +1561,7 @@ def test_refresh_account_token_direct(tmp_path, sample_token_dict, monkeypatch):
 
 def test_cli_refresh_identity_mismatch_prevents_sync(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
-    from promux.cli import main, get_storage
+    from promux.cli import get_storage, main
 
     assert main(["save", "acct1", "--email", "a1@test.com"]) == 0
     capsys.readouterr()
@@ -1586,7 +1594,7 @@ def test_cli_refresh_identity_mismatch_prevents_sync(tmp_path, sample_token_dict
 
 def test_cli_switch_auto_refreshes_expired(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
-    from promux.cli import main, get_storage
+    from promux.cli import get_storage, main
 
     assert main(["save", "acct1"]) == 0
 
@@ -1612,7 +1620,7 @@ def test_cli_switch_auto_refreshes_expired(tmp_path, sample_token_dict, monkeypa
 
 def test_quota_auto_refreshes_vault_and_syncs_live(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
-    from promux.cli import main, get_storage
+    from promux.cli import get_storage, main
     from promux.quota import QuotaClient
 
     # Save active profile
@@ -1658,7 +1666,7 @@ def test_quota_auto_refreshes_vault_and_syncs_live(tmp_path, sample_token_dict, 
 
 def test_quota_refreshed_in_vault_syncs_to_live(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
-    from promux.cli import main, get_storage
+    from promux.cli import get_storage, main
     from promux.quota import QuotaClient
 
     assert main(["save", "vault_acct"]) == 0
@@ -1695,7 +1703,7 @@ def test_quota_refreshed_in_vault_syncs_to_live(tmp_path, sample_token_dict, mon
 
 def test_quota_passes_storage_for_fallback_agy(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
-    from promux.cli import main, get_storage
+    from promux.cli import get_storage, main
     from promux.quota import QuotaClient
 
     assert main(["save", "agy_acct"]) == 0
@@ -1736,7 +1744,7 @@ def test_quota_passes_storage_for_fallback_agy(tmp_path, sample_token_dict, monk
 
 def test_quota_401_retry_passes_storage_and_syncs(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
-    from promux.cli import main, get_storage
+    from promux.cli import get_storage, main
     from promux.quota import QuotaClient
 
     assert main(["save", "retry_acct"]) == 0
@@ -1785,7 +1793,7 @@ def test_quota_401_retry_passes_storage_and_syncs(tmp_path, sample_token_dict, m
 
 def test_quota_revoked_token_error_handling(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
-    from promux.cli import main, get_storage
+    from promux.cli import get_storage, main
     from promux.quota import QuotaClient
 
     assert main(["save", "revoked_acct"]) == 0
@@ -1829,10 +1837,11 @@ def test_quota_revoked_token_error_handling(tmp_path, sample_token_dict, monkeyp
 
 def test_quota_multi_profile_does_not_leak_revoked_state(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
-    from promux.cli import main, get_storage
-    from promux.quota import QuotaClient
     import io
     import urllib.error
+
+    from promux.cli import get_storage, main
+    from promux.quota import QuotaClient
 
     # Create account 1 (acct1)
     assert main(["save", "acct1"]) == 0
@@ -2341,8 +2350,8 @@ def test_cmd_switch_smart_failure_json(monkeypatch, tmp_path, capsys):
 def test_cli_token_refresh_thread_local():
     from promux.cli import (
         _get_last_refresh_method,
-        _set_last_refresh_method,
         _get_last_refresh_revoked,
+        _set_last_refresh_method,
         _set_last_refresh_revoked,
     )
 
@@ -2394,9 +2403,9 @@ def test_cli_token_refresh_thread_local():
 
 def test_quota_cache_fetch_account_quota_integration(tmp_path, sample_token_dict, monkeypatch):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cache import QuotaCache
     from promux.cli import _fetch_account_quota, get_storage, main
     from promux.quota import QuotaClient
-    from promux.cache import QuotaCache
 
     main(["save", "acc1", "--email", "1@test.com"])
     storage = get_storage()
@@ -2565,9 +2574,9 @@ def test_cli_quota_no_cache_flag_dispatch(tmp_path, sample_token_dict, monkeypat
 
 def test_quota_cache_invalidation_on_401(tmp_path, sample_token_dict, monkeypatch):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
+    from promux.cache import QuotaCache
     from promux.cli import _fetch_account_quota, get_storage, main
     from promux.quota import QuotaClient
-    from promux.cache import QuotaCache
 
     main(["save", "acc1", "--email", "1@test.com"])
     storage = get_storage()

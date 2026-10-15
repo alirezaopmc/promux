@@ -116,7 +116,9 @@ class QuotaCache:
                 gemini_5h_remaining=float(quota_data.get("gemini_5h_remaining", 1.0)),
                 gemini_weekly_remaining=float(quota_data.get("gemini_weekly_remaining", 1.0)),
                 third_party_5h_remaining=float(quota_data.get("third_party_5h_remaining", 1.0)),
-                third_party_weekly_remaining=float(quota_data.get("third_party_weekly_remaining", 1.0)),
+                third_party_weekly_remaining=float(
+                    quota_data.get("third_party_weekly_remaining", 1.0)
+                ),
                 gemini_5h_reset=quota_data.get("gemini_5h_reset"),
                 gemini_weekly_reset=quota_data.get("gemini_weekly_reset"),
                 third_party_5h_reset=quota_data.get("third_party_5h_reset"),

@@ -204,7 +204,7 @@ _promux() {
                         case $words[2] in
                             switch)
                                 _arguments \
-                                    '--smart[Automatically switch to standby account with highest quota]' \
+                                    '--smart[Switch to standby account with highest quota]' \
                                     '--model[Target model tier]:model:(gemini claude gpt)' \
                                     '--no-cache[Bypass quota cache and query API directly]' \
                                     '--json[Output structured JSON]' \
@@ -223,7 +223,7 @@ _promux() {
                                 ;;
                             save)
                                 _arguments \
-                                    '--email[Account email address]:email:_message "email address"' \
+                                    '--email[Account email]:email:_message "email address"' \
                                     '--json[Output structured JSON]' \
                                     '1:name:_message "account name"'
                                 ;;
@@ -235,8 +235,8 @@ _promux() {
                                 ;;
                             watch)
                                 _arguments \
-                                    '--poll-seconds[Log polling interval]:seconds:_message "seconds"' \
-                                    '--cooldown[Fallback cooldown minutes]:cooldown:_message "minutes"'
+                                    '--poll-seconds[Polling interval]:seconds:_message "seconds"' \
+                                    '--cooldown[Fallback cooldown]:cooldown:_message "minutes"'
                                 ;;
                             tools)
                                 _arguments \
