@@ -4,4 +4,7 @@ import logging
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
-__version__ = "0.4.0"
+try:
+    from ._version import __version__
+except ImportError:
+    __version__ = "0.4.0"

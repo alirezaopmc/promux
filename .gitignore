@@ -8,6 +8,7 @@ dist/
 build/
 *.egg-info/
 .eggs/
+src/promux/_version.py
 
 # Testing and coverage
 .pytest_cache/

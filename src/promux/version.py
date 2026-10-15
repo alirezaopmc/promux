@@ -6,16 +6,29 @@ import json
 import platform
 from typing import Any
 
-from . import __version__
 from .adapters import get_default_registry
 from .colors import bold, cyan, dim, is_color_enabled
+
+
+def get_version() -> str:
+    """Return the installed package version, resolved lazily."""
+    try:
+        from ._version import __version__
+        return __version__
+    except ImportError:
+        pass
+    try:
+        from importlib.metadata import version
+        return version("promux")
+    except Exception:
+        return "0.4.0"
 
 
 def get_version_info() -> dict[str, Any]:
     """Return dictionary with runtime and tooling version details."""
     registry = get_default_registry()
     return {
-        "version": __version__,
+        "version": get_version(),
         "python": platform.python_version(),
         "platform": f"{platform.system()}-{platform.machine()}",
         "tools": registry.list_names(),
