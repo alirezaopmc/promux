@@ -24,8 +24,17 @@ Promux is intentionally designed around these core principles:
    ```
 
 3. **Install editable package with development dependencies**:
+
+   ### With pip
    ```bash
    pip install -e ".[dev]"
+   ```
+
+   ### With uv
+   ```bash
+   uv pip install -e ".[dev]"
+   # or
+   uv sync --extra dev
    ```
 
 ## Running Tests

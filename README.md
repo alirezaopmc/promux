@@ -34,6 +34,8 @@ Operating as a zero-intrusion filesystem overlay, `promux` keeps your active con
 
 `promux` organizes profiles per developer tool, allowing developers to manage credentials across different AI coding CLIs with a consistent interface.
 
+> **Note:** The `agy` adapter is the fully implemented primary adapter. The `claude`, `codex`, and `cursor` adapters are planned and currently scaffolded as stubs.
+
 To inspect registered tool adapters and capabilities:
 ```bash
 promux tools
@@ -231,6 +233,8 @@ promux switch --smart --model claude
 
 ### `promux tools [list]`
 Lists all registered tool adapters, active profiles, and capability support.
+
+> **Note:** Only the `agy` adapter is fully implemented. The `claude`, `codex`, and `cursor` adapters are planned and currently scaffolded as stubs.
 
 ```bash
 promux tools
