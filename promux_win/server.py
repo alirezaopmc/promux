@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -121,43 +122,47 @@ class PromuxApiHandler(BaseHTTPRequestHandler):
         _log(f"server: POST {path}")
         body = self._read_json_body()
 
-        if path == "/api/save":
-            self._handle_save_profile(body)
-        elif path == "/api/switch":
-            self._handle_switch_profile(body)
-        elif path == "/api/smart_switch":
-            self._handle_smart_switch(body)
-        elif path == "/api/account/update":
-            self._handle_account_update(body)
-        elif path == "/api/restart_antigravity":
-            self._handle_restart_antigravity()
-        elif path == "/api/alert/confirm":
-            self._handle_alert_confirm(body)
-        elif path == "/api/alert/dismiss":
-            self._handle_alert_dismiss()
-        elif path == "/api/toggle_setting":
-            self._handle_toggle_setting(body)
-        elif path == "/api/refresh_quota":
-            self._handle_refresh_quota(body)
-        elif path == "/api/refresh_token":
-            self._handle_refresh_token(body)
-        elif path == "/api/delete":
-            self._handle_delete_profile(body)
-        elif path == "/api/clear_cooldown":
-            self._handle_clear_cooldown(body)
-        elif path == "/api/toggle_watcher":
-            self._handle_toggle_watcher(body)
-        elif path == "/api/restart_server":
-            self._handle_restart_language_server()
-        elif path == "/api/import_token":
-            self._handle_import_token(body)
-        elif path == "/api/oauth/start":
-            self._handle_oauth_start(body)
-        elif path == "/api/exit":
-            self._send_json({"success": True})
-            threading.Thread(target=lambda: os._exit(0), daemon=True).start()
-        else:
-            self._send_json({"error": "Endpoint not found"}, status=404)
+        try:
+            if path == "/api/save":
+                self._handle_save_profile(body)
+            elif path == "/api/switch":
+                self._handle_switch_profile(body)
+            elif path == "/api/smart_switch":
+                self._handle_smart_switch(body)
+            elif path == "/api/account/update":
+                self._handle_account_update(body)
+            elif path == "/api/restart_antigravity":
+                self._handle_restart_antigravity()
+            elif path == "/api/alert/confirm":
+                self._handle_alert_confirm(body)
+            elif path == "/api/alert/dismiss":
+                self._handle_alert_dismiss()
+            elif path == "/api/toggle_setting":
+                self._handle_toggle_setting(body)
+            elif path == "/api/refresh_quota":
+                self._handle_refresh_quota(body)
+            elif path == "/api/refresh_token":
+                self._handle_refresh_token(body)
+            elif path == "/api/delete":
+                self._handle_delete_profile(body)
+            elif path == "/api/clear_cooldown":
+                self._handle_clear_cooldown(body)
+            elif path == "/api/toggle_watcher":
+                self._handle_toggle_watcher(body)
+            elif path == "/api/restart_server":
+                self._handle_restart_language_server()
+            elif path == "/api/import_token":
+                self._handle_import_token(body)
+            elif path == "/api/oauth/start":
+                self._handle_oauth_start(body)
+            elif path == "/api/exit":
+                self._send_json({"success": True})
+                threading.Thread(target=lambda: os._exit(0), daemon=True).start()
+            else:
+                self._send_json({"error": "Endpoint not found"}, status=404)
+        except Exception as e:
+            _log(f"server: POST {path} EXCEPTION: {traceback.format_exc()}")
+            self._send_json({"error": f"Internal server error: {e}"}, status=500)
 
     def _read_json_body(self) -> dict[str, Any]:
         try:
