@@ -111,11 +111,37 @@ All tool data lives under `~/.promux/tools/<tool>/`, providing a uniform layout.
 ## Installation
 
 ### Prerequisites
-- Linux or macOS
+- Linux, macOS, or Windows 10/11
 - Python 3.10 or higher
-- Antigravity CLI (`agy`) or other supported developer CLIs
+- Antigravity CLI (`agy`) or Antigravity IDE
 
-### Recommended: Install via pipx
+---
+
+## Windows Edition (Desktop GUI & Credential Manager)
+
+For Windows systems, Promux provides a native Windows edition with a sleek, modern desktop interface:
+- **Windows Credential Manager Integration:** Hot-swaps credentials in `gemini:antigravity` via native Win32 `advapi32.dll` APIs and synchronizes CLI token files simultaneously.
+- **Ultra-Modern Desktop GUI:** Standalone dark glassmorphic interface with real-time quota visualizations, live countdown timers, and active status indicators.
+- **1-Click Google Sign-In:** Direct OAuth authorization flow via system browser with automatic token exchange and vaulting.
+- **Zero External Server Dependencies:** Embedded HTTP API server running on standard library `http.server`.
+- **Automated Windows Installer:** One-click deployment script (`Install_Promux.bat` or `python installer.py`) creating Desktop & Start Menu shortcuts and User PATH registration.
+
+### Quick Start (Windows)
+```cmd
+# 1. Run the automated installer
+Install_Promux.bat
+
+# 2. Launch the desktop GUI
+promux gui
+
+# Or run via CLI
+promux list
+promux switch --smart
+```
+
+---
+
+### Recommended: Install via pipx (Linux/macOS)
 For an isolated CLI installation that is automatically linked into your `$PATH`:
 ```bash
 pipx install promux

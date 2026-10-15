@@ -1,0 +1,1584 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Promux — Antigravity Profile Multiplexer</title>
+  <style>
+    :root {
+      --bg: #080b11;
+      --surface: #0f172a;
+      --surface-elevated: #162035;
+      --surface-hover: #1e2c48;
+      --surface-active: #13223f;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-focus: rgba(6, 182, 212, 0.5);
+      --border-active: #06b6d4;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-subtle: #64748b;
+      --accent: #06b6d4;
+      --accent-gradient: linear-gradient(135deg, #06b6d4 0%, #3b82f6 50%, #8b5cf6 100%);
+      --smart-gradient: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+      --emerald: #10b981;
+      --emerald-bg: rgba(16, 185, 129, 0.12);
+      --amber: #f59e0b;
+      --amber-bg: rgba(245, 158, 11, 0.12);
+      --rose: #f43f5e;
+      --rose-bg: rgba(244, 63, 94, 0.12);
+      --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", "SF Pro Display", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: var(--font-family);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(circle at 10% 10%, rgba(6, 182, 212, 0.09) 0%, transparent 45%),
+        radial-gradient(circle at 90% 90%, rgba(139, 92, 246, 0.08) 0%, transparent 45%),
+        radial-gradient(circle at 50% 50%, rgba(15, 23, 42, 0.5) 0%, transparent 100%);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+      overflow-x: hidden;
+    }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.28); }
+
+    /* Header */
+    header {
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      padding: 14px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-icon {
+      width: 38px;
+      height: 38px;
+      background: var(--accent-gradient);
+      border-radius: 11px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 20px rgba(6, 182, 212, 0.35);
+      position: relative;
+    }
+
+    .brand-text {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand h1 {
+      font-size: 1.2rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      background: linear-gradient(to right, #ffffff, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .version-pill {
+      font-size: 0.68rem;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 2px 7px;
+      border-radius: 6px;
+      color: var(--accent);
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 15px;
+      border-radius: 9px;
+      font-size: 0.84rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .btn:hover {
+      background: var(--surface-hover);
+      border-color: rgba(255, 255, 255, 0.2);
+      transform: translateY(-1px);
+    }
+
+    .btn:active { transform: translateY(0); }
+
+    .btn-primary {
+      background: var(--accent-gradient);
+      border: none;
+      color: white;
+      box-shadow: 0 2px 14px rgba(6, 182, 212, 0.3);
+    }
+
+    .btn-primary:hover {
+      box-shadow: 0 4px 22px rgba(6, 182, 212, 0.5);
+      filter: brightness(1.08);
+    }
+
+    .btn-google {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: white;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+      position: relative;
+    }
+
+    .btn-google:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(66, 133, 244, 0.6);
+      box-shadow: 0 4px 20px rgba(66, 133, 244, 0.3);
+      transform: translateY(-1px);
+    }
+
+    .btn-smart {
+      background: var(--smart-gradient);
+      border: none;
+      color: white;
+      box-shadow: 0 2px 12px rgba(139, 92, 246, 0.35);
+    }
+
+    .btn-smart:hover {
+      box-shadow: 0 4px 22px rgba(139, 92, 246, 0.55);
+      filter: brightness(1.1);
+    }
+
+    .btn-sm {
+      padding: 6px 10px;
+      font-size: 0.78rem;
+    }
+
+    .btn-danger {
+      color: var(--rose);
+      border-color: rgba(244, 63, 94, 0.3);
+    }
+    .btn-danger:hover {
+      background: var(--rose-bg);
+      border-color: var(--rose);
+    }
+
+    /* Cloud Sync Pill */
+    .sync-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.75rem;
+      padding: 4px 11px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      transition: all 0.25s ease;
+    }
+
+    .sync-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--emerald);
+      box-shadow: 0 0 8px var(--emerald);
+      transition: all 0.3s;
+    }
+
+    .sync-pill.syncing {
+      border-color: rgba(6, 182, 212, 0.4);
+      color: var(--accent);
+      background: rgba(6, 182, 212, 0.08);
+    }
+
+    .sync-pill.syncing .sync-dot {
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+      animation: pulse 0.9s infinite;
+    }
+
+    .spin {
+      animation: spin 0.9s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    /* Detected Session Alert Banner */
+    .banner {
+      margin: 18px 28px 0;
+      background: linear-gradient(90deg, rgba(6, 182, 212, 0.12) 0%, rgba(59, 130, 246, 0.08) 100%);
+      border: 1px solid rgba(6, 182, 212, 0.35);
+      border-radius: 13px;
+      padding: 12px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .banner-text {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.88rem;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      background: #06b6d4;
+      border-radius: 50%;
+      box-shadow: 0 0 10px #06b6d4;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 0.4; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.15); }
+      100% { opacity: 0.4; transform: scale(0.9); }
+    }
+
+    /* Main Container */
+    main {
+      padding: 24px 28px;
+      flex: 1;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    /* Section Header */
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 22px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .section-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      letter-spacing: -0.01em;
+    }
+
+    .counter-badge {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 2px 9px;
+      border-radius: 12px;
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    /* Accounts Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(370px, 1fr));
+      gap: 20px;
+    }
+
+    /* Account Card */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card:hover {
+      border-color: rgba(255, 255, 255, 0.18);
+      transform: translateY(-2px);
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+    }
+
+    .card.is-active {
+      background: var(--surface-active);
+      border-color: var(--border-active);
+      box-shadow: 0 0 30px rgba(6, 182, 212, 0.22);
+    }
+
+    .card.is-active::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: var(--accent-gradient);
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .card-identity {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      width: 100%;
+    }
+
+    .card-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .card-name {
+      font-size: 1.08rem;
+      font-weight: 700;
+      color: white;
+      letter-spacing: -0.01em;
+    }
+
+    .card-badges {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .card-email {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: color 0.15s;
+      width: fit-content;
+    }
+
+    .card-email:hover {
+      color: var(--accent);
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .badge-active {
+      background: rgba(6, 182, 212, 0.18);
+      color: #06b6d4;
+      border: 1px solid rgba(6, 182, 212, 0.4);
+    }
+
+    .badge-standby {
+      background: rgba(148, 163, 184, 0.1);
+      color: #cbd5e1;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+
+    .badge-cooldown {
+      background: var(--amber-bg);
+      color: var(--amber);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+    }
+
+    .badge-plan {
+      background: rgba(139, 92, 246, 0.15);
+      color: #a78bfa;
+      border: 1px solid rgba(139, 92, 246, 0.3);
+    }
+
+    /* Quota Section */
+    .quotas-container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: rgba(0, 0, 0, 0.22);
+      border-radius: 12px;
+      padding: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .quota-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .quota-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.78rem;
+    }
+
+    .quota-label {
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .quota-stats {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .quota-pct {
+      font-weight: 700;
+      color: #f1f5f9;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .quota-countdown {
+      font-size: 0.72rem;
+      color: var(--text-subtle);
+      background: rgba(255, 255, 255, 0.05);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+
+    .progress-bar {
+      height: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .fill-high { background: linear-gradient(90deg, #10b981, #34d399); }
+    .fill-medium { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .fill-low { background: linear-gradient(90deg, #f43f5e, #fb7185); }
+
+    /* Card Actions */
+    .card-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-actions .btn-main {
+      flex: 1;
+      justify-content: center;
+    }
+
+    /* Auto-Failover Watcher Panel */
+    .daemon-bar {
+      margin-top: 32px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .daemon-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .daemon-info {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .shield-icon {
+      width: 42px;
+      height: 42px;
+      background: rgba(6, 182, 212, 0.1);
+      border: 1px solid rgba(6, 182, 212, 0.25);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Switch Toggle */
+    .switch-toggle {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+
+    .switch-toggle input { opacity: 0; width: 0; height: 0; }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: rgba(255, 255, 255, 0.15);
+      transition: 0.3s;
+      border-radius: 24px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.3s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider { background-color: #06b6d4; }
+    input:checked + .slider:before { transform: translateX(20px); }
+
+    /* Events Feed */
+    .events-feed {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 0.76rem;
+      max-height: 120px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .event-line {
+      display: flex;
+      gap: 10px;
+      color: #94a3b8;
+    }
+
+    .event-line.SUCCESS { color: #34d399; }
+    .event-line.WARN { color: #fbbf24; }
+    .event-line.ERROR { color: #f87171; }
+
+    /* Modals */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(12px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      animation: fadeIn 0.2s ease;
+    }
+
+    .modal {
+      background: #0f172a;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 20px;
+      width: 90%;
+      max-width: 500px;
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      box-shadow: 0 25px 65px rgba(0, 0, 0, 0.75);
+    }
+
+    .modal-title {
+      font-size: 1.18rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      letter-spacing: -0.01em;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .form-label {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .form-input, .form-textarea {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 10px 14px;
+      color: white;
+      font-size: 0.88rem;
+      outline: none;
+      transition: all 0.2s;
+    }
+
+    .form-input:focus, .form-textarea:focus {
+      border-color: var(--accent);
+      background: rgba(255, 255, 255, 0.08);
+      box-shadow: 0 0 12px rgba(6, 182, 212, 0.25);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+    }
+
+    .tab-btn {
+      padding: 7px 14px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.84rem;
+      border-radius: 7px;
+      transition: all 0.2s;
+    }
+
+    .tab-btn.active {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--accent);
+    }
+
+    /* Google Hero Box */
+    .oauth-hero {
+      background: linear-gradient(135deg, rgba(66, 133, 244, 0.12) 0%, rgba(139, 92, 246, 0.12) 100%);
+      border: 1px solid rgba(66, 133, 244, 0.3);
+      border-radius: 14px;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 14px;
+    }
+
+    .oauth-hero-icon {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 20px rgba(66, 133, 244, 0.25);
+    }
+
+    /* Dedicated OAuth Progress Card */
+    .oauth-status-card {
+      background: #0f172a;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 22px;
+      padding: 36px 30px;
+      width: 90%;
+      max-width: 440px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8);
+      animation: popIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes popIn {
+      from { transform: scale(0.92); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    .oauth-loader {
+      width: 54px;
+      height: 54px;
+      border: 4px solid rgba(255, 255, 255, 0.1);
+      border-top-color: #06b6d4;
+      border-radius: 50%;
+      animation: spin 0.85s linear infinite;
+    }
+
+    /* Toast */
+    #toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .toast {
+      background: #162035;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 11px;
+      padding: 12px 18px;
+      font-size: 0.86rem;
+      font-weight: 500;
+      color: white;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      animation: slideUp 0.25s ease;
+    }
+
+    .toast.success { border-left: 4px solid var(--emerald); }
+    .toast.error { border-left: 4px solid var(--rose); }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(15px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Empty state */
+    .empty-state {
+      grid-column: 1 / -1;
+      padding: 60px 20px;
+      text-align: center;
+      color: var(--text-muted);
+      background: var(--surface);
+      border: 1px dashed var(--border);
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <div class="logo-icon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <h1>Promux</h1>
+        <span class="version-pill">v2.0</span>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <!-- Direct 1-Click Google Sign-In -->
+      <button class="btn btn-google" onclick="startGoogleLogin()" id="btn-header-google" title="Authorize and link Google account via browser">
+        <svg width="16" height="16" viewBox="0 0 24 24">
+          <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3h3.86c2.26-2.09 3.68-5.17 3.68-9.1z"/>
+          <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.26v3.09C3.26 21.36 7.35 24 12 24z"/>
+          <path fill="#FBBC05" d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.13-1.57.38-2.29V6.62H1.26C.46 8.23 0 10.06 0 12s.46 3.77 1.26 5.38l4.01-3.09z"/>
+          <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.26 6.62l4.01 3.09c.95-2.85 3.6-4.96 6.73-4.96z"/>
+        </svg>
+        <span>Sign in with Google</span>
+      </button>
+
+      <!-- Smart Quota Switch -->
+      <button class="btn btn-smart" onclick="triggerSmartSwitch()" id="btn-smart-switch" title="Rotate to account with highest remaining quota">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>
+        </svg>
+        <span>Smart Switch</span>
+      </button>
+
+      <!-- Refresh Quotas -->
+      <button class="btn" onclick="refreshAllQuotas()" id="btn-refresh-all" title="Fetch live quotas from Google Cloud Code Assist">
+        <svg id="refresh-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+          <path d="M3 3v5h5"/>
+          <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+          <path d="M16 21h5v-5"/>
+        </svg>
+        <span>Refresh Quotas</span>
+      </button>
+
+      <!-- Add Account -->
+      <button class="btn btn-primary" onclick="openAddModal()">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+        <span>Add Account</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Live Detected Session Banner -->
+  <div id="live-banner" class="banner" style="display: none;">
+    <div class="banner-text">
+      <div class="pulse-dot"></div>
+      <span>Active session detected on Windows:</span>
+      <strong id="live-email" style="color: var(--accent);">-</strong>
+    </div>
+    <button class="btn btn-sm btn-primary" onclick="saveActiveSessionPrompt()">
+      <span>Save as Profile</span>
+    </button>
+  </div>
+
+  <!-- Main Content -->
+  <main>
+    <div class="section-head">
+      <div class="section-title">
+        <span>Vaulted Accounts</span>
+        <span class="counter-badge" id="account-count">0</span>
+        <!-- Live Cloud Sync Pill -->
+        <span class="sync-pill" id="sync-pill">
+          <span class="sync-dot"></span>
+          <span id="sync-label">Synced with Cloud</span>
+        </span>
+      </div>
+      <div style="font-size: 0.84rem; color: var(--text-muted);" id="active-summary">
+        <!-- Active account summary text -->
+      </div>
+    </div>
+
+    <!-- Accounts Grid -->
+    <div class="grid" id="accounts-grid">
+      <!-- Injected via JavaScript -->
+    </div>
+
+    <!-- Auto-Failover Watcher Panel -->
+    <div class="daemon-bar">
+      <div class="daemon-header">
+        <div class="daemon-info">
+          <div class="shield-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </div>
+          <div>
+            <div style="font-weight: 700; font-size: 0.96rem; letter-spacing: -0.01em;">Auto-Failover Quota Shield</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Real-time log tailing; automatically rotates to a healthy account upon 429 quota exhaustion.</div>
+          </div>
+        </div>
+        <label class="switch-toggle" title="Enable/Disable background log watcher">
+          <input type="checkbox" id="watcher-toggle" onchange="toggleWatcher(this.checked)">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="events-feed" id="events-feed">
+        <div class="event-line">Service ready. Standing by.</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Add Account Modal -->
+  <div class="modal-overlay" id="add-modal">
+    <div class="modal">
+      <div class="modal-title">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
+        </svg>
+        <span>Add Antigravity Account</span>
+      </div>
+
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchModalTab('oauth')" id="tab-oauth">Google Sign-In</button>
+        <button class="tab-btn" onclick="switchModalTab('capture')" id="tab-capture">Active Session</button>
+        <button class="tab-btn" onclick="switchModalTab('token')" id="tab-token">Token / Key</button>
+      </div>
+
+      <!-- Tab 1: Smart Google 1-Click Login -->
+      <div id="tab-content-oauth">
+        <div class="oauth-hero">
+          <div class="oauth-hero-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3h3.86c2.26-2.09 3.68-5.17 3.68-9.1z"/>
+              <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.26v3.09C3.26 21.36 7.35 24 12 24z"/>
+              <path fill="#FBBC05" d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.13-1.57.38-2.29V6.62H1.26C.46 8.23 0 10.06 0 12s.46 3.77 1.26 5.38l4.01-3.09z"/>
+              <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.26 6.62l4.01 3.09c.95-2.85 3.6-4.96 6.73-4.96z"/>
+            </svg>
+          </div>
+          <div>
+            <div style="font-weight: 700; font-size: 0.98rem; margin-bottom: 5px;">1-Click Browser Authorization</div>
+            <div style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.55;">
+              Launches your default browser to authorize with Google. Promux automatically captures tokens, profile metadata, and live quota metrics.
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin: 16px 0;">
+          <label class="form-label">Profile Alias (Optional, e.g. work, personal, dev)</label>
+          <input type="text" class="form-input" id="oauth-alias-input" placeholder="e.g. work">
+        </div>
+
+        <div style="display:flex; justify-content: flex-end; gap:8px;">
+          <button class="btn" onclick="closeAddModal()">Cancel</button>
+          <button class="btn btn-google" onclick="submitModalOAuthLogin()" style="background: rgba(255,255,255,0.08);">
+            <svg width="16" height="16" viewBox="0 0 24 24"><path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3h3.86c2.26-2.09 3.68-5.17 3.68-9.1z"/><path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.26v3.09C3.26 21.36 7.35 24 12 24z"/><path fill="#FBBC05" d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.13-1.57.38-2.29V6.62H1.26C.46 8.23 0 10.06 0 12s.46 3.77 1.26 5.38l4.01-3.09z"/><path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.26 6.62l4.01 3.09c.95-2.85 3.6-4.96 6.73-4.96z"/></svg>
+            <span>Authorize via Browser</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Tab 2: Capture Live Session -->
+      <div id="tab-content-capture" style="display: none;">
+        <div class="form-group" style="margin-bottom: 14px;">
+          <label class="form-label">Profile Name</label>
+          <input type="text" class="form-input" id="profile-name-input" placeholder="e.g. primary">
+        </div>
+        <div style="background: rgba(255,255,255,0.04); border-radius: 9px; padding: 12px; font-size: 0.82rem; color: var(--text-muted); margin-bottom: 16px; line-height: 1.5;">
+          Captures and vaults the active credentials currently stored in Windows Credential Manager.
+        </div>
+        <div style="display:flex; justify-content: flex-end; gap:8px;">
+          <button class="btn" onclick="closeAddModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="submitCaptureSession()">Save Profile</button>
+        </div>
+      </div>
+
+      <!-- Tab 3: Paste Raw Token -->
+      <div id="tab-content-token" style="display: none;">
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label class="form-label">Profile Name</label>
+          <input type="text" class="form-input" id="token-profile-name" placeholder="e.g. secondary">
+        </div>
+        <div class="form-group" style="margin-bottom: 16px;">
+          <label class="form-label">Google Token JSON or Refresh Token</label>
+          <textarea class="form-textarea" id="token-payload" rows="4" placeholder='{"token": {"refresh_token": "..."}}'></textarea>
+        </div>
+        <div style="display:flex; justify-content: flex-end; gap:8px;">
+          <button class="btn" onclick="closeAddModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="submitImportToken()">Import Token</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dedicated OAuth Status Modal -->
+  <div class="modal-overlay" id="oauth-status-modal">
+    <div class="oauth-status-card" id="oauth-card-waiting">
+      <div class="oauth-loader"></div>
+      <h3 style="font-size: 1.18rem; color: #f8fafc; font-weight: 700;">Waiting for Google Authorization...</h3>
+      <p style="font-size: 0.86rem; color: var(--text-muted); line-height: 1.6;">
+        Google sign-in page opened in your browser. Select your account and grant access. Promux will link it automatically.
+      </p>
+      <div style="margin: 4px 0;">
+        <a id="oauth-manual-link" href="#" target="_blank" style="color: var(--accent); font-size: 0.82rem; text-decoration: underline;">
+          Browser didn't open? Click here to launch manually
+        </a>
+      </div>
+      <button class="btn btn-sm" onclick="cancelOAuthFlow()" style="margin-top: 6px;">Cancel</button>
+    </div>
+
+    <!-- Success State -->
+    <div class="oauth-status-card" id="oauth-card-success" style="display: none;">
+      <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+      </svg>
+      <h3 style="font-size: 1.25rem; color: #10b981; font-weight: 700;">Connected Successfully!</h3>
+      <p style="font-size: 0.9rem; color: #cbd5e1; line-height: 1.6;" id="oauth-success-text">Account linked.</p>
+      <div style="display:flex; gap:10px; margin-top:8px;">
+        <button class="btn btn-primary" id="oauth-btn-switch" onclick="switchOAuthAccountNow()">
+          Switch to this Account Now
+        </button>
+        <button class="btn" onclick="closeOAuthModal()">
+          Done
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container"></div>
+
+  <script>
+    // =================================================================
+    // State & API Management
+    // =================================================================
+    let state = {
+      active: null,
+      accounts: [],
+      live_session: null,
+      watcher_running: false,
+      events: []
+    };
+
+    let activeOAuthState = null;
+    let oauthPollInterval = null;
+    let latestAddedAccount = null;
+
+    async function apiCall(endpoint, method = 'GET', body = null) {
+      try {
+        const opts = {
+          method,
+          headers: { 'Content-Type': 'application/json' }
+        };
+        if (body) opts.body = JSON.stringify(body);
+        const res = await fetch(endpoint, opts);
+        return await res.json();
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+        return null;
+      }
+    }
+
+    async function loadStatus() {
+      const data = await apiCall('/api/status');
+      if (data) {
+        state = data;
+        render();
+      }
+    }
+
+    // =================================================================
+    // Render Functions
+    // =================================================================
+    function render() {
+      const grid = document.getElementById('accounts-grid');
+      const countEl = document.getElementById('account-count');
+      const activeSummaryEl = document.getElementById('active-summary');
+      const bannerEl = document.getElementById('live-banner');
+      const liveEmailEl = document.getElementById('live-email');
+      const watcherToggle = document.getElementById('watcher-toggle');
+
+      countEl.innerText = state.accounts.length;
+      watcherToggle.checked = state.watcher_running;
+
+      // Banner for unsaved live session
+      if (state.live_session && state.live_session.detected && state.live_session.email) {
+        const alreadySaved = state.accounts.some(a => a.email === state.live_session.email);
+        if (!alreadySaved) {
+          liveEmailEl.innerText = state.live_session.email;
+          bannerEl.style.display = 'flex';
+        } else {
+          bannerEl.style.display = 'none';
+        }
+      } else {
+        bannerEl.style.display = 'none';
+      }
+
+      // Active summary text
+      const activeAcct = state.accounts.find(a => a.is_active);
+      if (activeAcct) {
+        activeSummaryEl.innerText = `Active Profile: ${activeAcct.name} (${activeAcct.email || 'N/A'})`;
+      } else {
+        activeSummaryEl.innerText = '';
+      }
+
+      // Events terminal
+      renderEvents();
+
+      // Accounts Grid
+      if (state.accounts.length === 0) {
+        grid.innerHTML = `
+          <div class="empty-state">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7h10"/><path d="M7 12h10"/><path d="M7 17h10"/>
+            </svg>
+            <div>No accounts vaulted yet. Click 'Sign in with Google' to connect your first account.</div>
+            <button class="btn btn-google" onclick="startGoogleLogin()">
+              <svg width="16" height="16" viewBox="0 0 24 24"><path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3h3.86c2.26-2.09 3.68-5.17 3.68-9.1z"/><path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.26v3.09C3.26 21.36 7.35 24 12 24z"/><path fill="#FBBC05" d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.13-1.57.38-2.29V6.62H1.26C.46 8.23 0 10.06 0 12s.46 3.77 1.26 5.38l4.01-3.09z"/><path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.26 6.62l4.01 3.09c.95-2.85 3.6-4.96 6.73-4.96z"/></svg>
+              <span>Sign in with Google</span>
+            </button>
+          </div>
+        `;
+        return;
+      }
+
+      grid.innerHTML = state.accounts.map(acct => {
+        const isActive = acct.is_active;
+        const q = acct.quota;
+        
+        let stateBadgeClass = 'badge-standby';
+        let stateBadgeText = 'STANDBY';
+        if (isActive) {
+          stateBadgeClass = 'badge-active';
+          stateBadgeText = 'ACTIVE';
+        } else if (acct.state === 'cooldown') {
+          stateBadgeClass = 'badge-cooldown';
+          stateBadgeText = 'COOLDOWN';
+        }
+
+        // Quotas
+        const gemini5hPct = q && q.gemini_5h_remaining !== undefined ? Math.round(q.gemini_5h_remaining * 100) : 100;
+        const geminiWkPct = q && q.gemini_weekly_remaining !== undefined ? Math.round(q.gemini_weekly_remaining * 100) : 100;
+        const claude5hPct = q && q.third_party_5h_remaining !== undefined ? Math.round(q.third_party_5h_remaining * 100) : 100;
+
+        const getFillClass = (pct) => pct > 50 ? 'fill-high' : (pct > 20 ? 'fill-medium' : 'fill-low');
+
+        return `
+          <div class="card ${isActive ? 'is-active' : ''}">
+            <div class="card-top">
+              <div class="card-identity">
+                <div class="card-title-row">
+                  <span class="card-name">${escapeHtml(acct.name)}</span>
+                  <div class="card-badges">
+                    <span class="badge ${stateBadgeClass}">${stateBadgeText}</span>
+                    <span class="badge badge-plan">${escapeHtml(acct.plan_type || 'Standard')}</span>
+                  </div>
+                </div>
+                <div class="card-email" onclick="copyText('${acct.email}')" title="Click to copy email address">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
+                  </svg>
+                  <span>${escapeHtml(acct.email || 'No email associated')}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Quotas Container -->
+            <div class="quotas-container">
+              <!-- Gemini 5h -->
+              <div class="quota-row">
+                <div class="quota-meta">
+                  <span class="quota-label">Gemini 5h Window</span>
+                  <div class="quota-stats">
+                    <span class="quota-pct">${gemini5hPct}%</span>
+                    ${q && q.gemini_5h_countdown ? `<span class="quota-countdown">⏱ ${q.gemini_5h_countdown}</span>` : ''}
+                  </div>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill ${getFillClass(gemini5hPct)}" style="width: ${gemini5hPct}%"></div>
+                </div>
+              </div>
+
+              <!-- Gemini Weekly -->
+              <div class="quota-row">
+                <div class="quota-meta">
+                  <span class="quota-label">Gemini Weekly Window</span>
+                  <div class="quota-stats">
+                    <span class="quota-pct">${geminiWkPct}%</span>
+                    ${q && q.gemini_weekly_countdown ? `<span class="quota-countdown">⏱ ${q.gemini_weekly_countdown}</span>` : ''}
+                  </div>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill ${getFillClass(geminiWkPct)}" style="width: ${geminiWkPct}%"></div>
+                </div>
+              </div>
+
+              <!-- Claude 5h -->
+              <div class="quota-row">
+                <div class="quota-meta">
+                  <span class="quota-label">Claude & GPT 5h Window</span>
+                  <div class="quota-stats">
+                    <span class="quota-pct">${claude5hPct}%</span>
+                    ${q && q.third_party_5h_countdown ? `<span class="quota-countdown">⏱ ${q.third_party_5h_countdown}</span>` : ''}
+                  </div>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill ${getFillClass(claude5hPct)}" style="width: ${claude5hPct}%"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card Actions -->
+            <div class="card-actions">
+              ${isActive ? `
+                <button class="btn btn-sm btn-primary btn-main" style="opacity: 0.9; cursor: default;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 6 9 17l-5-5"/>
+                  </svg>
+                  <span>Active Profile</span>
+                </button>
+              ` : `
+                <button class="btn btn-sm btn-primary btn-main" onclick="switchProfile('${acct.name}')">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+                  </svg>
+                  <span>Switch Account</span>
+                </button>
+              `}
+
+              <button class="btn btn-sm" onclick="checkAccountQuota('${acct.name}')" title="Check live quota from Google">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
+                </svg>
+              </button>
+
+              <button class="btn btn-sm" onclick="refreshToken('${acct.name}')" title="Force renew OAuth token">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m2 18 10-10 4 4 6-6"/><path d="m18 2 4 4"/>
+                </svg>
+              </button>
+
+              ${acct.state === 'cooldown' ? `
+                <button class="btn btn-sm" onclick="clearCooldown('${acct.name}')" title="Clear Cooldown State">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                  </svg>
+                </button>
+              ` : ''}
+
+              <button class="btn btn-sm btn-danger" onclick="deleteProfile('${acct.name}')" title="Delete Profile">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderEvents() {
+      const feed = document.getElementById('events-feed');
+      if (!state.events || state.events.length === 0) return;
+      feed.innerHTML = state.events.map(ev => `
+        <div class="event-line ${ev.level}">
+          <span>[${ev.time}]</span>
+          <span>${escapeHtml(ev.message)}</span>
+        </div>
+      `).join('');
+      feed.scrollTop = feed.scrollHeight;
+    }
+
+    // =================================================================
+    // Smart Google 1-Click OAuth Flow
+    // =================================================================
+    async function startGoogleLogin(alias = '') {
+      showToast('Opening Google Authorization in your default browser...');
+      const res = await apiCall('/api/oauth/start', 'POST', { alias });
+      if (!res || !res.success) {
+        showToast('Failed to start Google sign-in: ' + (res ? res.error : 'Unknown error'), 'error');
+        return;
+      }
+
+      activeOAuthState = res.state;
+      latestAddedAccount = null;
+
+      // Show Progress Modal
+      const modal = document.getElementById('oauth-status-modal');
+      document.getElementById('oauth-card-waiting').style.display = 'flex';
+      document.getElementById('oauth-card-success').style.display = 'none';
+      document.getElementById('oauth-manual-link').href = res.auth_url;
+      modal.style.display = 'flex';
+
+      // Start Polling
+      if (oauthPollInterval) clearInterval(oauthPollInterval);
+      oauthPollInterval = setInterval(checkOAuthStatus, 1200);
+    }
+
+    async function checkOAuthStatus() {
+      if (!activeOAuthState) return;
+      const res = await apiCall(`/api/oauth/check?state=${encodeURIComponent(activeOAuthState)}`);
+      if (!res) return;
+
+      if (res.status === 'success') {
+        clearInterval(oauthPollInterval);
+        oauthPollInterval = null;
+        latestAddedAccount = res.account;
+
+        // Display Success Screen
+        document.getElementById('oauth-card-waiting').style.display = 'none';
+        document.getElementById('oauth-card-success').style.display = 'flex';
+        document.getElementById('oauth-success-text').innerHTML = `
+          Google account <strong>${escapeHtml(res.email || res.account)}</strong> was linked as profile <strong>${escapeHtml(res.account)}</strong>.
+        `;
+
+        showToast(`Google account ${res.email || res.account} successfully connected!`, 'success');
+        await loadStatus();
+        await autoRefreshQuotas(true);
+      } else if (res.status === 'error') {
+        clearInterval(oauthPollInterval);
+        oauthPollInterval = null;
+        showToast('Google sign-in error: ' + res.error, 'error');
+        closeOAuthModal();
+      }
+    }
+
+    function cancelOAuthFlow() {
+      if (oauthPollInterval) clearInterval(oauthPollInterval);
+      oauthPollInterval = null;
+      activeOAuthState = null;
+      closeOAuthModal();
+      showToast('Sign-in cancelled.', 'info');
+    }
+
+    function closeOAuthModal() {
+      if (oauthPollInterval) clearInterval(oauthPollInterval);
+      oauthPollInterval = null;
+      document.getElementById('oauth-status-modal').style.display = 'none';
+    }
+
+    async function switchOAuthAccountNow() {
+      if (latestAddedAccount) {
+        await switchProfile(latestAddedAccount);
+      }
+      closeOAuthModal();
+    }
+
+    function submitModalOAuthLogin() {
+      const alias = document.getElementById('oauth-alias-input').value.trim();
+      closeAddModal();
+      startGoogleLogin(alias);
+    }
+
+    // =================================================================
+    // Auto-Refresh & Live Actions
+    // =================================================================
+    async function autoRefreshQuotas(silent = false) {
+      const pill = document.getElementById('sync-pill');
+      const label = document.getElementById('sync-label');
+      const icon = document.getElementById('refresh-icon');
+
+      pill.classList.add('syncing');
+      label.innerText = 'Updating Quotas...';
+      if (icon) icon.classList.add('spin');
+
+      try {
+        await apiCall('/api/refresh_quota', 'POST', { name: 'all' });
+        await loadStatus();
+
+        pill.classList.remove('syncing');
+        label.innerText = 'Synced with Cloud';
+      } catch (e) {
+        pill.classList.remove('syncing');
+        label.innerText = 'Synced with Cloud';
+      } finally {
+        if (icon) icon.classList.remove('spin');
+      }
+
+      if (!silent) {
+        showToast('Quotas refreshed successfully', 'success');
+      }
+    }
+
+    async function refreshAllQuotas() {
+      await autoRefreshQuotas(false);
+    }
+
+    async function switchProfile(name) {
+      showToast(`Switching to profile '${name}'...`);
+      const res = await apiCall('/api/switch', 'POST', { name });
+      if (res && res.success) {
+        showToast(`Successfully switched to '${name}'`, 'success');
+        await loadStatus();
+      } else {
+        showToast(res ? res.error : 'Switch failed', 'error');
+      }
+    }
+
+    async function triggerSmartSwitch() {
+      showToast('Evaluating account quotas...');
+      const res = await apiCall('/api/smart_switch', 'POST');
+      if (res && res.success) {
+        showToast(`Smart Switch rotated to: ${res.target}`, 'success');
+        await loadStatus();
+      } else {
+        showToast(res ? res.error : 'Smart Switch failed', 'error');
+      }
+    }
+
+    async function checkAccountQuota(name) {
+      showToast(`Querying quota for ${name}...`);
+      await apiCall('/api/refresh_quota', 'POST', { name });
+      await loadStatus();
+      showToast(`Quota updated for ${name}`, 'success');
+    }
+
+    async function refreshToken(name) {
+      showToast(`Renewing OAuth token for ${name}...`);
+      const res = await apiCall('/api/refresh_token', 'POST', { name });
+      if (res && res.success) {
+        showToast(`Token renewed: ${res.message}`, 'success');
+        await loadStatus();
+      } else {
+        showToast(res ? res.error : 'Renewal failed', 'error');
+      }
+    }
+
+    async function clearCooldown(name) {
+      await apiCall('/api/clear_cooldown', 'POST', { name });
+      showToast(`Cooldown cleared for ${name}`, 'success');
+      await loadStatus();
+    }
+
+    async function deleteProfile(name) {
+      if (!confirm(`Are you sure you want to delete profile '${name}'?`)) return;
+      const res = await apiCall('/api/delete', 'POST', { name });
+      if (res && res.success) {
+        showToast(`Profile '${name}' removed`, 'success');
+        await loadStatus();
+      }
+    }
+
+    async function toggleWatcher(enabled) {
+      await apiCall('/api/toggle_watcher', 'POST', { enabled });
+      showToast(enabled ? 'Auto-Failover enabled' : 'Auto-Failover disabled', 'success');
+      await loadStatus();
+    }
+
+    // Modal Control
+    function openAddModal() {
+      document.getElementById('add-modal').style.display = 'flex';
+      switchModalTab('oauth');
+    }
+
+    function closeAddModal() {
+      document.getElementById('add-modal').style.display = 'none';
+    }
+
+    function switchModalTab(tab) {
+      document.getElementById('tab-oauth').classList.toggle('active', tab === 'oauth');
+      document.getElementById('tab-capture').classList.toggle('active', tab === 'capture');
+      document.getElementById('tab-token').classList.toggle('active', tab === 'token');
+
+      document.getElementById('tab-content-oauth').style.display = tab === 'oauth' ? 'block' : 'none';
+      document.getElementById('tab-content-capture').style.display = tab === 'capture' ? 'block' : 'none';
+      document.getElementById('tab-content-token').style.display = tab === 'token' ? 'block' : 'none';
+    }
+
+    async function submitCaptureSession() {
+      const name = document.getElementById('profile-name-input').value.trim();
+      if (!name) {
+        showToast('Please enter a profile name', 'error');
+        return;
+      }
+      const res = await apiCall('/api/save', 'POST', { name });
+      if (res && res.success) {
+        showToast(`Profile '${name}' saved successfully!`, 'success');
+        closeAddModal();
+        await loadStatus();
+        await autoRefreshQuotas(true);
+      } else {
+        showToast(res ? res.error : 'Failed to save', 'error');
+      }
+    }
+
+    async function submitImportToken() {
+      const name = document.getElementById('token-profile-name').value.trim();
+      const raw = document.getElementById('token-payload').value.trim();
+      if (!name || !raw) {
+        showToast('Both name and token payload are required', 'error');
+        return;
+      }
+      const res = await apiCall('/api/import_token', 'POST', { name, token_raw: raw });
+      if (res && res.success) {
+        showToast(`Profile '${name}' imported successfully!`, 'success');
+        closeAddModal();
+        await loadStatus();
+        await autoRefreshQuotas(true);
+      } else {
+        showToast(res ? res.error : 'Import failed', 'error');
+      }
+    }
+
+    function saveActiveSessionPrompt() {
+      openAddModal();
+      switchModalTab('capture');
+      if (state.live_session && state.live_session.email) {
+        const username = state.live_session.email.split('@')[0].replace(/[^a-zA-Z0-9_\-]/g, '');
+        document.getElementById('profile-name-input').value = username || 'primary';
+      }
+    }
+
+    function copyText(text) {
+      if (!text) return;
+      navigator.clipboard.writeText(text);
+      showToast('Email address copied to clipboard!', 'success');
+    }
+
+    function showToast(msg, type = 'info') {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.innerText = msg;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(10px)';
+        setTimeout(() => toast.remove(), 250);
+      }, 3500);
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // =================================================================
+    // Lifecycle: Initial Auto-Refresh & Focus Sync
+    // =================================================================
+    document.addEventListener('DOMContentLoaded', async () => {
+      // 1. Instant load of vaulted profiles
+      await loadStatus();
+
+      // 2. Concurrently fetch fresh live quotas from Google Cloud Code Assist
+      await autoRefreshQuotas(true);
+
+      // 3. Silent re-sync whenever user returns to window
+      window.addEventListener('focus', () => {
+        autoRefreshQuotas(true);
+      });
+
+      // 4. Background re-sync every 40s
+      setInterval(() => {
+        autoRefreshQuotas(true);
+      }, 40000);
+    });
+  </script>
+</body>
+</html>
