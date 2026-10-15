@@ -1,47 +1,124 @@
-import argparse
-import concurrent.futures
-import json
-import os
-import shutil
-import subprocess
-import sys
-import threading
-import urllib.parse
-import urllib.request
-from contextlib import nullcontext
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import Any
+"""Antigravity CLI profile multiplexer & quota failover daemon.
 
-from .adapters import ToolRegistry, get_default_registry
-from .completion import (
-    SUPPORTED_SHELLS,
-    generate_bash_completion,
-    generate_zsh_completion,
+Argument parsing and command dispatch.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import sys
+from pathlib import Path
+
+from .adapters import get_default_registry
+from .auth import (
+    _get_last_refresh_method,
+    _get_last_refresh_revoked,
+    _refresh_token_fallback_agy,
+    _refresh_token_file,
+    _refresh_token_native,
+    _set_last_refresh_method,
+    _set_last_refresh_revoked,
 )
-from .lock import file_lock
+from .auth import (
+    atomic_copy_token as _atomic_copy_token,
+)
+from .auth import (
+    extract_access_token as _extract_access_token,
+)
+from .auth import (
+    extract_expiry as _extract_expiry,
+)
+from .auth import (
+    extract_refresh_token as _extract_refresh_token,
+)
+from .auth import (
+    get_oauth_credentials as _get_oauth_credentials,
+)
+from .auth import (
+    is_token_expired as _is_token_expired,
+)
+from .auth import (
+    parse_token_expiry_dt as _parse_token_expiry_dt,
+)
+from .auth import (
+    read_token_data as _read_token_data,
+)
+from .auth import (
+    sync_active_tokens as _sync_active_tokens,
+)
+from .commands.profile import (
+    cmd_list,
+    cmd_next,
+    cmd_remove,
+    cmd_save,
+    cmd_switch,
+    cmd_whoami,
+)
+from .commands.quota import (
+    _fetch_account_quota as _fetch_account_quota,
+)
+from .commands.quota import (
+    _refresh_account_token as _refresh_account_token,
+)
+from .commands.quota import (
+    cmd_quota,
+    cmd_refresh,
+)
+from .commands.tools import cmd_completion, cmd_tools
+from .commands.watch import cmd_watch
+from .completion import SUPPORTED_SHELLS
 from .constants import (
     DEFAULT_COOLDOWN_MINUTES,
     DEFAULT_POLL_SECONDS,
     DEFAULT_TOKEN_EXPIRY_BUFFER_SECONDS,
-    OAUTH_CLIENT_ID,
-    OAUTH_CLIENT_SECRET,
-    OAUTH_TOKEN_URL,
-    PROMUX_HOME,
 )
-from .cache import QuotaCache
 from .failover import FailoverEngine
-from .formatters import (
-    format_quota_cell,
-    format_quota_detail,
-    format_relative_countdown,
-)
-from .models import AccountMeta, QuotaSummary
-from .quota import QuotaClient
-from .storage import StorageEngine
 from .help import cmd_help
+from .logging_config import configure_cli_logging
+from .storage import StorageEngine
 from .version import cmd_version
-from .watch import LogMatch, LogWatcher
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "build_parser",
+    "main",
+    "get_storage",
+    "cmd_list",
+    "cmd_save",
+    "cmd_switch",
+    "cmd_next",
+    "cmd_whoami",
+    "cmd_remove",
+    "cmd_quota",
+    "cmd_refresh",
+    "cmd_watch",
+    "cmd_tools",
+    "cmd_completion",
+    "cmd_help",
+    "cmd_version",
+    "_fetch_account_quota",
+    "_refresh_account_token",
+    "_get_or_refresh_access_token",
+    "_refresh_token_file",
+    "_refresh_token_native",
+    "_refresh_token_fallback_agy",
+    "_get_last_refresh_method",
+    "_set_last_refresh_method",
+    "_get_last_refresh_revoked",
+    "_set_last_refresh_revoked",
+    "_atomic_copy_token",
+    "_extract_access_token",
+    "_extract_expiry",
+    "_extract_refresh_token",
+    "_get_oauth_credentials",
+    "_is_token_expired",
+    "_parse_token_expiry_dt",
+    "_read_token_data",
+    "_sync_active_tokens",
+]
 
 
 def get_storage() -> StorageEngine:
@@ -51,841 +128,21 @@ def get_storage() -> StorageEngine:
     return AgyAdapter().get_storage()
 
 
-# Compatibility shims importing from .auth (Phase 1)
-from .auth import (
-    _auth_local as _cli_local,
-    _get_last_refresh_method,
-    _get_last_refresh_revoked,
-    _refresh_token_fallback_agy,
-    _refresh_token_file,
-    _refresh_token_native,
-    _set_last_refresh_method,
-    _set_last_refresh_revoked,
-    atomic_copy_token as _atomic_copy_token,
-    extract_access_token as _extract_access_token,
-    extract_expiry as _extract_expiry,
-    extract_refresh_token as _extract_refresh_token,
-    get_oauth_credentials as _get_oauth_credentials,
-    get_or_refresh_access_token as _get_or_refresh_access_token,
-    is_token_expired as _is_token_expired,
-    parse_token_expiry_dt as _parse_token_expiry_dt,
-    read_token_data as _read_token_data,
-    sync_active_tokens as _sync_active_tokens,
-)
-
-
-
-def cmd_list(storage: StorageEngine, json_out: bool) -> int:
-    state = storage.load_state()
-    active = state.get("active")
-    accounts_dict = state.get("accounts", {})
-
-    rows = []
-    for name, data in accounts_dict.items():
-        acct = AccountMeta.from_dict(data)
-        is_active = name == active
-        rows.append(
-            {
-                "name": name,
-                "active": is_active,
-                "state": acct.state.value,
-                "email": acct.email,
-                "cooldown_until": acct.cooldown_until.isoformat() if acct.cooldown_until else None,
-                "last_used": acct.last_used_at.isoformat() if acct.last_used_at else None,
-                "last_used_at": acct.last_used_at.isoformat() if acct.last_used_at else None,
-            }
-        )
-
-    if json_out:
-        print(json.dumps(rows, indent=2))
-        return 0
-
-    if not rows:
-        print("No accounts found. Use 'promux save <name>' to save your active profile.")
-        return 0
-
-    header = f"{'ACTIVE':<8}{'NAME':<18}{'STATE':<12}{'EMAIL':<32}{'COOLDOWN':<24}{'LAST USED'}"
-    divider = "-" * 110
-    print(header)
-    print(divider)
-    for r in rows:
-        star = "*" if r["active"] else " "
-        name_str = r["name"]
-        state_str = r["state"]
-        email_str = r["email"] or "-"
-        cool_str = r["cooldown_until"] or "-"
-        used_str = r["last_used"] or "-"
-        print(f"{star:<8}{name_str:<18}{state_str:<12}{email_str:<32}{cool_str:<24}{used_str}")
-    return 0
-
-
-def cmd_save(storage: StorageEngine, name: str, email: str | None, json_out: bool) -> int:
-    if not storage.live_token.exists():
-        msg = f"Error: Active token file not found at {storage.live_token}"
-        print(msg, file=sys.stderr)
-        return 1
-
-    project_id = None
-    plan_type = "STANDARD"
-
-    access_token = _get_or_refresh_access_token(storage.live_token)
-
-    if access_token:
-        client = QuotaClient(token=access_token)
-        if not email:
-            try:
-                email = client.fetch_email()
-            except Exception:
-                pass
-        try:
-            meta = client.load_metadata()
-            project_id = meta.get("project_id")
-            plan_type = meta.get("plan_name", "STANDARD")
-        except Exception:
-            pass
-
-    try:
-        acct = storage.save_profile(
-            name=name,
-            email=email,
-            project_id=project_id,
-            plan_type=plan_type,
-        )
-    except Exception as e:
-        print(f"Error saving profile: {e}", file=sys.stderr)
-        return 1
-
-    if json_out:
-        print(json.dumps(acct.to_dict(), indent=2))
-    else:
-        print(f"Saved active profile as '{name}' ({acct.email or 'no email'}).")
-    return 0
-
-
-def cmd_switch(
-    storage: StorageEngine,
-    name: str | None,
-    json_out: bool,
-    smart: bool = False,
-    model: str = "gemini",
-    failover: FailoverEngine | None = None,
-    no_cache: bool = False,
-) -> int:
-    if smart:
-        if failover is None:
-            failover = FailoverEngine(storage)
-        cache = QuotaCache(storage.home)
-
-        def _fetch_wrapper(acct: str) -> tuple[QuotaSummary | None, str | None, str | None]:
-            try:
-                res = _fetch_account_quota(storage, acct, no_cache=no_cache, cache=cache)
-                return res[0], res[1], res[2]
-            except TypeError:
-                res = _fetch_account_quota(storage, acct)
-                return res[0], res[1], res[2]
-
-        res = failover.rotate_smart(
-            quota_fetcher=_fetch_wrapper,
-            model=model,
-        )
-        if res.success:
-            if json_out:
-                print(
-                    json.dumps(
-                        {
-                            "success": True,
-                            "from_account": res.from_account,
-                            "to_account": res.to_account,
-                            "model": res.model,
-                            "quota": {
-                                "5h_remaining": res.five_hour_remaining,
-                                "weekly_remaining": res.weekly_remaining,
-                            },
-                            "cooldown_until": (
-                                res.cooldown_until.isoformat() if res.cooldown_until else None
-                            ),
-                        },
-                        indent=2,
-                    )
-                )
-            else:
-                five_pct = (
-                    f"{res.five_hour_remaining * 100:.1f}%"
-                    if res.five_hour_remaining is not None
-                    else "-"
-                )
-                wk_pct = (
-                    f"{res.weekly_remaining * 100:.1f}%"
-                    if res.weekly_remaining is not None
-                    else "-"
-                )
-                msg = f"Switched active profile to '{res.to_account}' ({res.model} 5h: {five_pct}, weekly: {wk_pct})."
-                if res.cooldown_until and res.from_account:
-                    msg += f" (Cooldown set for '{res.from_account}' until {res.cooldown_until.strftime('%H:%M UTC')}.)"
-                print(msg)
-            return 0
-        else:
-            if json_out:
-                print(
-                    json.dumps(
-                        {"success": False, "error": res.reason},
-                        indent=2,
-                    )
-                )
-            else:
-                print(f"Error: {res.reason}", file=sys.stderr)
-            return 1
-
-    if not name:
-        if json_out:
-            print(
-                json.dumps(
-                    {"success": False, "error": "must specify account name or pass --smart"},
-                    indent=2,
-                )
-            )
-        else:
-            print("Error: must specify account name or pass --smart", file=sys.stderr)
-        return 2
-
-    success = storage.switch_profile(name)
-    if success:
-        if json_out:
-            print(json.dumps({"success": True, "active": name}, indent=2))
-        else:
-            print(f"Switched active profile to '{name}'.")
-        return 0
-    else:
-        if json_out:
-            print(
-                json.dumps(
-                    {"success": False, "error": f"Account '{name}' not found or token missing"},
-                    indent=2,
-                )
-            )
-        print(f"Error: Account '{name}' not found or token missing", file=sys.stderr)
-        return 1
-
-
-def cmd_next(failover: FailoverEngine, reason: str, cooldown: int, json_out: bool) -> int:
-    res = failover.rotate_next(reason=reason, cooldown_minutes=cooldown)
-    result_dict = {
-        "success": res.success,
-        "from_account": res.from_account,
-        "to_account": res.to_account,
-        "reason": res.reason,
-        "cooldown_until": res.cooldown_until.isoformat() if res.cooldown_until else None,
-    }
-    if json_out:
-        print(json.dumps(result_dict, indent=2))
-    else:
-        if res.success:
-            print(
-                f"Rotated from '{res.from_account}' to '{res.to_account}' (reason: {res.reason})."
-            )
-        else:
-            print(f"Rotation failed: {res.reason}", file=sys.stderr)
-
-    return 0 if res.success else 1
-
-
-def cmd_whoami(storage: StorageEngine, json_out: bool) -> int:
-    active_name = storage.get_active_profile()
-    if not active_name:
-        if json_out:
-            print(json.dumps({"active": None, "email": None, "expiry": None}, indent=2))
-        else:
-            print("No active profile.", file=sys.stderr)
-        return 1
-
-    acct = storage.get_account(active_name)
-    token_data = _read_token_data(storage.live_token)
-    if not token_data:
-        token_path = storage.accounts_dir / active_name / "antigravity-oauth-token"
-        token_data = _read_token_data(token_path)
-
-    expiry = _extract_expiry(token_data)
-    email = acct.email if acct else None
-
-    if json_out:
-        payload = {
-            "active": active_name,
-            "email": email,
-            "expiry": expiry,
-            "project_id": acct.project_id if acct else None,
-            "plan_type": acct.plan_type if acct else None,
-            "state": acct.state.value if acct else None,
-        }
-        print(json.dumps(payload, indent=2))
-        return 0
-
-    print(f"Active Profile: {active_name}")
-    print(f"Email:          {email or '-'}")
-    print(f"Token Expiry:   {expiry or '-'}")
-    if acct:
-        print(f"State:          {acct.state.value}")
-        print(f"Project ID:     {acct.project_id or '-'}")
-        print(f"Plan Type:      {acct.plan_type}")
-    return 0
-
-
-def cmd_remove(storage: StorageEngine, name: str, json_out: bool) -> int:
-    success = storage.remove_profile(name)
-    if success:
-        QuotaCache(storage.home).invalidate(name)
-        if json_out:
-            print(json.dumps({"success": True, "removed": name}, indent=2))
-        else:
-            print(f"Removed profile '{name}' from vault.")
-        return 0
-    else:
-        if json_out:
-            print(json.dumps({"success": False, "error": f"Account '{name}' not found"}, indent=2))
-        print(f"Error: Account '{name}' not found", file=sys.stderr)
-        return 1
-
-
-def _fetch_account_quota(
-    storage: StorageEngine,
-    target_name: str,
-    no_cache: bool = False,
-    cache: QuotaCache | None = None,
-) -> tuple[QuotaSummary | None, str | None, str | None, bool]:
-    """Fetch quota for an account, handling token resolution, refresh, and project ID discovery.
-
-    Returns:
-        tuple of (QuotaSummary or None, project_id or None, error_message or None, is_cached)
-    """
-    if cache is None:
-        cache = QuotaCache(storage.home)
-
-    _set_last_refresh_revoked(False)
-
-    acct = storage.get_account(target_name)
-    if not acct:
-        return None, None, f"Account '{target_name}' not found in vault.", False
-
-    if not no_cache:
-        cached_qs = cache.get(target_name)
-        if cached_qs is not None:
-            return cached_qs, acct.project_id, None, True
-
-    # Locate token file
-    is_active = target_name == storage.get_active_profile()
-    vault_token_path = storage.accounts_dir / target_name / "antigravity-oauth-token"
-
-    if is_active and storage.live_token.exists():
-        token_path = storage.live_token
-    else:
-        token_path = vault_token_path
-
+def _get_or_refresh_access_token(
+    token_path: Path, storage: StorageEngine | None = None
+) -> str | None:
     token_data = _read_token_data(token_path)
-    orig_acc = _extract_access_token(token_data)
-    orig_exp = _extract_expiry(token_data)
-
-    try:
-        access_token = _get_or_refresh_access_token(token_path, storage=storage)
-    except TypeError:
-        access_token = _get_or_refresh_access_token(token_path)
-
-    # If token was refreshed, sync between live and vault for active profile
-    new_data = _read_token_data(token_path)
-    new_acc = _extract_access_token(new_data)
-    new_exp = _extract_expiry(new_data)
-    token_refreshed = bool(new_acc and (orig_acc is None or new_acc != orig_acc or new_exp != orig_exp))
-
-    if is_active and token_refreshed:
-        if token_path == storage.live_token:
-            _sync_active_tokens(storage.live_token, vault_token_path)
-        elif token_path == vault_token_path:
-            _sync_active_tokens(vault_token_path, storage.live_token)
-
-    if not access_token:
-        access_token = new_acc or orig_acc
-
-    if not access_token:
-        if _get_last_refresh_revoked():
-            cache.invalidate(target_name)
-            return (
-                None,
-                None,
-                f"Refresh token for '{target_name}' has expired or been revoked. "
-                f"Please re-authenticate via 'agy' and save using 'promux save {target_name}'.",
-                False,
-            )
-        return None, None, f"Could not extract access token for account '{target_name}'.", False
-
-    client = QuotaClient(token=access_token)
-    project_id = acct.project_id
-    if not project_id:
-        try:
-            meta = client.load_metadata()
-            project_id = meta.get("project_id")
-            if project_id:
-                with storage.transaction() as state:
-                    if target_name in state.get("accounts", {}):
-                        state["accounts"][target_name]["project_id"] = project_id
-        except Exception as e:
-            if _get_last_refresh_revoked():
-                cache.invalidate(target_name)
-                return (
-                    None,
-                    None,
-                    f"Refresh token for '{target_name}' has expired or been revoked. "
-                    f"Please re-authenticate via 'agy' and save using 'promux save {target_name}'.",
-                    False,
-                )
-            return None, None, f"Failed to load project metadata for '{target_name}': {e}", False
-
-    if not project_id:
-        return None, None, f"Could not determine project ID for account '{target_name}'.", False
-
-    try:
-        qs = client.get_quota(project_id)
-        cache.set(target_name, qs)
-        return qs, project_id, None, False
-    except Exception as e:
-        if "401" in str(e):
-            td = _read_token_data(token_path)
-            try:
-                refreshed = _refresh_token_file(token_path, td, storage=storage) if td else None
-            except TypeError:
-                refreshed = _refresh_token_file(token_path, td) if td else None
-            if refreshed:
-                if is_active:
-                    if token_path == storage.live_token:
-                        _sync_active_tokens(storage.live_token, vault_token_path)
-                    elif token_path == vault_token_path:
-                        _sync_active_tokens(vault_token_path, storage.live_token)
-                client.token = refreshed
-                try:
-                    qs = client.get_quota(project_id)
-                    cache.set(target_name, qs)
-                    return qs, project_id, None, False
-                except Exception as retry_e:
-                    if "401" in str(retry_e):
-                        cache.invalidate(target_name)
-                    return None, project_id, f"Error retrieving quota: {retry_e}", False
-            else:
-                cache.invalidate(target_name)
-                if _get_last_refresh_revoked():
-                    return (
-                        None,
-                        project_id,
-                        f"Authentication failed (401): Refresh token for '{target_name}' has expired or been revoked. "
-                        f"Please re-authenticate via 'agy' and save using 'promux save {target_name}'.",
-                        False,
-                    )
-                return None, project_id, f"Authentication failed (401): {e}", False
-        return None, project_id, f"Error retrieving quota: {e}", False
-
-
-def cmd_quota(
-    storage: StorageEngine,
-    name: str | None,
-    json_out: bool,
-    no_cache: bool = False,
-) -> int:
-    active_profile = storage.get_active_profile()
-    cache = QuotaCache(storage.home)
-
-    # Single-profile detail mode
-    if name is not None:
-        try:
-            res = _fetch_account_quota(storage, name, no_cache=no_cache, cache=cache)
-        except TypeError:
-            res = _fetch_account_quota(storage, name)
-        if len(res) == 4:
-            qs, project_id, err, is_cached = res
-        else:
-            qs, project_id, err = res[0], res[1], res[2]
-            is_cached = False
-        if err or not qs:
-            msg = err or f"Could not retrieve quota for '{name}'."
-            if json_out:
-                print(json.dumps({"error": msg}, indent=2))
-            print(f"Error: {msg}", file=sys.stderr)
-            return 1
-
-        if json_out:
-            res_dict = {
-                "account": name,
-                "project_id": project_id,
-                "cached": is_cached,
-                "gemini": {
-                    "5h_remaining": qs.gemini_5h_remaining,
-                    "5h_reset": qs.gemini_5h_reset,
-                    "5h_reset_relative": format_relative_countdown(qs.gemini_5h_reset),
-                    "weekly_remaining": qs.gemini_weekly_remaining,
-                    "weekly_reset": qs.gemini_weekly_reset,
-                    "weekly_reset_relative": format_relative_countdown(qs.gemini_weekly_reset),
-                },
-                "third_party": {
-                    "5h_remaining": qs.third_party_5h_remaining,
-                    "5h_reset": qs.third_party_5h_reset,
-                    "5h_reset_relative": format_relative_countdown(qs.third_party_5h_reset),
-                    "weekly_remaining": qs.third_party_weekly_remaining,
-                    "weekly_reset": qs.third_party_weekly_reset,
-                    "weekly_reset_relative": format_relative_countdown(qs.third_party_weekly_reset),
-                },
-            }
-            print(json.dumps(res_dict, indent=2))
-            return 0
-
-        active_tag = " [ACTIVE]" if name == active_profile else ""
-        print(f"Quota for account '{name}' (project: {project_id}){active_tag}:\n")
-        header = f"{'MODEL GROUP':<24} {'WINDOW':<10} {'REMAINING & RESET'}"
-        print(header)
-        print("-" * 80)
-
-        g_5h = format_quota_detail(qs.gemini_5h_remaining, qs.gemini_5h_reset)
-        g_wk = format_quota_detail(qs.gemini_weekly_remaining, qs.gemini_weekly_reset)
-        c_5h = format_quota_detail(qs.third_party_5h_remaining, qs.third_party_5h_reset)
-        c_wk = format_quota_detail(qs.third_party_weekly_remaining, qs.third_party_weekly_reset)
-
-        print(f"{'Gemini Models':<24} {'5h':<10} {g_5h}")
-        print(f"{'Gemini Models':<24} {'weekly':<10} {g_wk}")
-        print(f"{'Claude & GPT Models':<24} {'5h':<10} {c_5h}")
-        print(f"{'Claude & GPT Models':<24} {'weekly':<10} {c_wk}")
-        return 0
-
-    # Multi-profile overview mode
-    accounts = storage.list_accounts()
-    if not accounts:
-        msg = "No accounts registered in vault."
-        if json_out:
-            print(json.dumps([], indent=2))
-        else:
-            print(msg)
-        return 0
-
-    json_records = []
-    text_rows = []
-
-    def fetch_for_account(
-        acct_meta: AccountMeta,
-    ) -> tuple[str, bool, QuotaSummary | None, str | None, str | None, bool]:
-        acct_name = acct_meta.name
-        is_active = acct_name == active_profile
-        try:
-            res = _fetch_account_quota(storage, acct_name, no_cache=no_cache, cache=cache)
-        except TypeError:
-            res = _fetch_account_quota(storage, acct_name)
-        if len(res) == 4:
-            qs, project_id, err, is_cached = res
-        else:
-            qs, project_id, err = res[0], res[1], res[2]
-            is_cached = False
-        return acct_name, is_active, qs, project_id, err, is_cached
-
-    max_workers = min(20, max(1, len(accounts)))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for acct_name, is_active, qs, project_id, err, is_cached in executor.map(fetch_for_account, accounts):
-            if json_out:
-                record: dict[str, Any] = {
-                    "account": acct_name,
-                    "active": is_active,
-                    "project_id": project_id,
-                    "cached": is_cached,
-                }
-                if qs:
-                    record["gemini"] = {
-                        "5h_remaining": qs.gemini_5h_remaining,
-                        "5h_reset": qs.gemini_5h_reset,
-                        "5h_reset_relative": format_relative_countdown(qs.gemini_5h_reset),
-                        "weekly_remaining": qs.gemini_weekly_remaining,
-                        "weekly_reset": qs.gemini_weekly_reset,
-                        "weekly_reset_relative": format_relative_countdown(qs.gemini_weekly_reset),
-                    }
-                    record["third_party"] = {
-                        "5h_remaining": qs.third_party_5h_remaining,
-                        "5h_reset": qs.third_party_5h_reset,
-                        "5h_reset_relative": format_relative_countdown(qs.third_party_5h_reset),
-                        "weekly_remaining": qs.third_party_weekly_remaining,
-                        "weekly_reset": qs.third_party_weekly_reset,
-                        "weekly_reset_relative": format_relative_countdown(qs.third_party_weekly_reset),
-                    }
-                else:
-                    record["error"] = err
-                json_records.append(record)
-            else:
-                active_mark = "*" if is_active else ""
-                if qs:
-                    g5 = format_quota_cell(qs.gemini_5h_remaining, qs.gemini_5h_reset)
-                    gw = format_quota_cell(qs.gemini_weekly_remaining, qs.gemini_weekly_reset)
-                    c5 = format_quota_cell(qs.third_party_5h_remaining, qs.third_party_5h_reset)
-                    cw = format_quota_cell(qs.third_party_weekly_remaining, qs.third_party_weekly_reset)
-                else:
-                    g5 = "[AUTH ERROR]" if err and "401" in str(err) else "[ERROR]"
-                    gw = "-"
-                    c5 = "-"
-                    cw = "-"
-                text_rows.append((active_mark, acct_name, g5, gw, c5, cw))
-
-    if json_out:
-        print(json.dumps(json_records, indent=2))
-        return 0
-
-    header = (
-        f"{'ACTIVE':<7} {'PROFILE':<17} {'GEMINI (5H)':<20} {'GEMINI (WK)':<20} "
-        f"{'CLAUDE (5H)':<20} {'CLAUDE (WK)':<20}"
-    )
-    print(header)
-    print("-" * len(header))
-    for active_mark, acct_name, g5, gw, c5, cw in text_rows:
-        print(
-            f"{active_mark:<7} {acct_name:<17} {g5:<20} {gw:<20} {c5:<20} {cw:<20}"
-        )
-
-    return 0
-
-
-def _format_expiry_table(expiry_str: str | None) -> str:
-    """Format an ISO timestamp to 'YYYY-MM-DD HH:MM:SS' for table display."""
-    if not expiry_str:
-        return "-"
-    try:
-        clean = expiry_str.replace("Z", "+00:00")
-        dt = datetime.fromisoformat(clean)
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(timezone.utc)
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
-    except Exception:
-        return expiry_str
-
-
-def _refresh_account_token(
-    storage: StorageEngine,
-    account_name: str,
-    force: bool = False,
-) -> tuple[bool, str]:
-    """Execute token refresh for a named account in storage.
-
-    Returns:
-        tuple of (success: bool, message: str)
-    """
-    if not storage.get_account(account_name):
-        return False, f"Account '{account_name}' not found in vault"
-
-    active_profile = storage.get_active_profile()
-    is_active = account_name == active_profile
-    vault_token_path = storage.accounts_dir / account_name / "antigravity-oauth-token"
-
-    if is_active and storage.live_token.exists():
-        if not vault_token_path.exists():
-            _atomic_copy_token(storage.live_token, vault_token_path)
-        else:
-            live_data = _read_token_data(storage.live_token)
-            vault_data = _read_token_data(vault_token_path)
-            lr = _extract_refresh_token(live_data)
-            vr = _extract_refresh_token(vault_data)
-            if not (lr and vr and lr != vr):
-                live_dt = _parse_token_expiry_dt(_extract_expiry(live_data))
-                vault_dt = _parse_token_expiry_dt(_extract_expiry(vault_data))
-                if live_dt and vault_dt and live_dt > vault_dt:
-                    _atomic_copy_token(storage.live_token, vault_token_path)
-
-    token_path = vault_token_path
-    token_data = _read_token_data(token_path)
-    if not token_data and is_active and storage.live_token.exists():
-        token_data = _read_token_data(storage.live_token)
-
     if not token_data:
-        return False, f"No token data found for account '{account_name}'."
-
-    if not force and not _is_token_expired(token_data):
-        return True, "Token is still valid (not expired)."
-
-    refreshed = _refresh_token_file(token_path, token_data, storage=storage)
-    if refreshed:
-        new_data = _read_token_data(token_path)
-        if is_active:
-            try:
-                should_sync_live = True
-                if storage.live_token.exists():
-                    curr_live_data = _read_token_data(storage.live_token)
-                    curr_lr = _extract_refresh_token(curr_live_data)
-                    ref_lr = _extract_refresh_token(new_data) or _extract_refresh_token(token_data)
-                    if curr_lr and ref_lr and curr_lr != ref_lr:
-                        should_sync_live = False
-                if should_sync_live:
-                    _atomic_copy_token(token_path, storage.live_token)
-            except Exception:
-                pass
-        method = (
-            _get_last_refresh_method()
-            if _get_last_refresh_method() in ("native", "fallback (agy)")
-            else "native"
-        )
-        return True, f"Token refreshed successfully ({method})."
-    else:
-        return False, f"Failed to refresh token ({_get_last_refresh_method()})."
-
-
-def cmd_refresh(
-    storage: StorageEngine,
-    name: str | None,
-    force: bool,
-    json_out: bool,
-) -> int:
-    """Refresh OAuth access token for vault accounts."""
-    active_profile = storage.get_active_profile()
-
-    if name is not None:
-        if not storage.get_account(name):
-            msg = f"Account '{name}' not found in vault"
-            if json_out:
-                print(json.dumps({"error": msg}, indent=2))
-            print(f"Error: {msg}", file=sys.stderr)
-            return 1
-        targets = [name]
-    else:
-        accounts = storage.list_accounts()
-        if not accounts:
-            if json_out:
-                print(json.dumps([], indent=2))
-            else:
-                print("No accounts registered in vault.")
-            return 0
-        targets = [acct.name for acct in accounts]
-
-    results: list[dict[str, Any]] = []
-    any_failed = False
-
-    for target_name in targets:
-        is_active = target_name == active_profile
-        vault_token_path = storage.accounts_dir / target_name / "antigravity-oauth-token"
-
-        # Locate / sync token file:
-        # If target is active profile and storage.live_token exists, check/sync
-        if is_active and storage.live_token.exists():
-            if not vault_token_path.exists():
-                _atomic_copy_token(storage.live_token, vault_token_path)
-            else:
-                live_data = _read_token_data(storage.live_token)
-                vault_data = _read_token_data(vault_token_path)
-                lr = _extract_refresh_token(live_data)
-                vr = _extract_refresh_token(vault_data)
-                # Check that storage.live_token and vault_token_path share the same refresh_token
-                # before syncing to ensure token identity.
-                if not (lr and vr and lr != vr):
-                    live_dt = _parse_token_expiry_dt(_extract_expiry(live_data))
-                    vault_dt = _parse_token_expiry_dt(_extract_expiry(vault_data))
-                    if live_dt and vault_dt and live_dt > vault_dt:
-                        _atomic_copy_token(storage.live_token, vault_token_path)
-
-        token_path = vault_token_path
-        token_data = _read_token_data(token_path)
-        if not token_data and is_active and storage.live_token.exists():
-            token_data = _read_token_data(storage.live_token)
-
-        if not token_data:
-            results.append(
-                {
-                    "account": target_name,
-                    "status": "FAILED",
-                    "expiry": None,
-                    "method": "failed",
-                }
-            )
-            any_failed = True
-            continue
-
-        if not force and not _is_token_expired(token_data):
-            results.append(
-                {
-                    "account": target_name,
-                    "status": "UNCHANGED",
-                    "expiry": _extract_expiry(token_data),
-                    "method": "valid",
-                }
-            )
-        else:
+        return None
+    access_token = _extract_access_token(token_data)
+    if _is_token_expired(token_data, buffer_seconds=DEFAULT_TOKEN_EXPIRY_BUFFER_SECONDS):
+        try:
             refreshed = _refresh_token_file(token_path, token_data, storage=storage)
-            if refreshed:
-                method = (
-                    _get_last_refresh_method()
-                    if _get_last_refresh_method() in ("native", "fallback (agy)")
-                    else "native"
-                )
-                new_data = _read_token_data(token_path)
-                new_expiry = _extract_expiry(new_data) or _extract_expiry(token_data)
-                results.append(
-                    {
-                        "account": target_name,
-                        "status": "REFRESHED",
-                        "expiry": new_expiry,
-                        "method": method,
-                    }
-                )
-                # If target is active profile, sync refreshed token to storage.live_token
-                if is_active:
-                    try:
-                        should_sync_live = True
-                        if storage.live_token.exists():
-                            curr_live_data = _read_token_data(storage.live_token)
-                            curr_lr = _extract_refresh_token(curr_live_data)
-                            ref_lr = _extract_refresh_token(new_data) or _extract_refresh_token(token_data)
-                            if curr_lr and ref_lr and curr_lr != ref_lr:
-                                should_sync_live = False
-                        if should_sync_live:
-                            _atomic_copy_token(token_path, storage.live_token)
-                    except Exception:
-                        pass
-            else:
-                results.append(
-                    {
-                        "account": target_name,
-                        "status": "FAILED",
-                        "expiry": _extract_expiry(token_data),
-                        "method": "failed",
-                    }
-                )
-                any_failed = True
-
-    if json_out:
-        print(json.dumps(results, indent=2))
-        return 1 if any_failed else 0
-
-    header = f"{'ACCOUNT':<18}{'STATUS':<13}{'EXPIRY (UTC)':<26}{'METHOD'}"
-    divider = "-" * 65
-    print(header)
-    print(divider)
-    for r in results:
-        disp_exp = _format_expiry_table(r["expiry"])
-        print(f"{r['account']:<18}{r['status']:<13}{disp_exp:<26}{r['method']}")
-
-    return 1 if any_failed else 0
-
-
-def cmd_watch(failover: FailoverEngine, poll_seconds: float, cooldown: int | None) -> int:
-    gemini_home = None
-    if "PROMUX_GEMINI_HOME" in os.environ:
-        gemini_home = Path(os.environ["PROMUX_GEMINI_HOME"])
-    elif hasattr(failover, "storage") and hasattr(failover.storage, "gemini_home"):
-        gemini_home = failover.storage.gemini_home
-
-    watcher = LogWatcher(
-        failover=failover,
-        poll_seconds=poll_seconds,
-        gemini_home=gemini_home,
-    )
-
-    def on_match(match: LogMatch) -> None:
-        print(f"[promux-watch] Quota exhausted: {match.pattern} in {match.file_path}")
-        if match.reset_hint:
-            print(f"[promux-watch] Reset hint detected: {match.reset_hint}")
-
-    cool_str = f"{cooldown}m" if cooldown else "auto"
-    print(f"[promux-watch] Starting log watcher (poll: {poll_seconds}s, cooldown: {cool_str})...")
-    print("[promux-watch] Press Ctrl+C to stop.")
-
-    try:
-        watcher.run_forever(on_match=on_match, cooldown_minutes=cooldown)
-    except KeyboardInterrupt:
-        pass
-    print("[promux-watch] Watcher stopped.")
-    return 0
+        except TypeError:
+            refreshed = _refresh_token_file(token_path, token_data)
+        if refreshed:
+            return refreshed
+    return access_token
 
 
 COMMAND_CAPABILITIES: dict[str, str] = {
@@ -901,221 +158,112 @@ COMMAND_CAPABILITIES: dict[str, str] = {
 }
 
 
-def cmd_tools(registry: ToolRegistry, json_out: bool = False) -> int:
-    if json_out:
-        out = []
-        for tool in registry.list_all():
-            storage = tool.get_storage()
-            out.append(
-                {
-                    "tool": tool.name,
-                    "name": tool.display_name,
-                    "active_profile": storage.get_active_profile(),
-                    "capabilities": tool.list_capabilities(),
-                    "default": tool.name == registry.default_tool().name,
-                }
-            )
-        print(json.dumps(out, indent=2))
-        return 0
-
-    print(f"{'TOOL':<10}{'NAME':<22}{'ACTIVE PROFILE':<16}{'CAPABILITIES'}")
-    print("-" * 73)
-    for tool in registry.list_all():
-        storage = tool.get_storage()
-        active = storage.get_active_profile() or "-"
-        caps = tool.list_capabilities()
-        if getattr(tool, "is_scaffolded", False):
-            caps_str = f"{', '.join(caps)} (scaffolded)"
-        else:
-            caps_str = ", ".join(caps)
-        print(f"{tool.name:<10}{tool.display_name:<22}{active:<16}{caps_str}")
-    return 0
-
-
-def cmd_completion(shell: str) -> int:
-    if shell == "bash":
-        print(generate_bash_completion(), end="")
-        return 0
-    elif shell == "zsh":
-        print(generate_zsh_completion(), end="")
-        return 0
-    return 1
-
-
 def build_parser() -> argparse.ArgumentParser:
-    common_parser = argparse.ArgumentParser(add_help=False)
-    common_parser.add_argument(
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
         "--json", action="store_true", default=argparse.SUPPRESS, help="Output in JSON format"
     )
-    common_parser.add_argument(
+    common.add_argument(
         "--no-color",
         action="store_true",
         default=argparse.SUPPRESS,
         help="Disable ANSI color output",
+    )
+    common.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="Increase verbosity (-v for INFO, -vv for DEBUG)",
+    )
+    common.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        default=False,
+        help="Suppress all output except errors",
     )
 
     parser = argparse.ArgumentParser(
         prog="promux",
         description="Antigravity CLI profile multiplexer & quota failover daemon",
         add_help=False,
-        parents=[common_parser],
+        parents=[common],
     )
     parser.add_argument(
-        "-h",
-        "--help",
-        action="store_true",
-        default=False,
-        help="Show help and exit",
+        "-h", "--help", action="store_true", default=False, help="Show help and exit"
     )
     parser.add_argument(
-        "-V",
-        "--version",
-        action="store_true",
-        default=False,
-        help="Show version information and exit",
+        "-V", "--version", action="store_true", default=False, help="Show version and exit"
     )
 
     sub = parser.add_subparsers(dest="command", required=False, help="Subcommand to execute")
+    sub.add_parser("version", parents=[common], help="Show version information")
+    sub.add_parser("list", parents=[common], help="List all accounts in the vault")
 
-    # version
-    sub.add_parser("version", parents=[common_parser], help="Show version information")
-
-    # list
-    sub.add_parser("list", parents=[common_parser], help="List all accounts in the vault")
-
-    # save
-    save_p = sub.add_parser(
-        "save", parents=[common_parser], help="Save active token as a named profile"
-    )
+    save_p = sub.add_parser("save", parents=[common], help="Save active token as a named profile")
     save_p.add_argument("name", help="Profile name")
     save_p.add_argument("--email", default=None, help="Account email (auto-detected if omitted)")
 
     switch_p = sub.add_parser(
-        "switch",
-        parents=[common_parser],
-        help="Hot-swap to a named profile or auto-switch to best quota",
+        "switch", parents=[common], help="Hot-swap active profile or auto-switch to best quota"
     )
     switch_p.add_argument(
-        "name",
-        nargs="?",
-        default=None,
-        help="Profile name to switch to (optional if --smart is set)",
+        "name", nargs="?", default=None, help="Profile name (optional if --smart is set)"
     )
     switch_p.add_argument(
-        "--smart",
-        action="store_true",
-        default=False,
-        help="Automatically switch to the standby account with highest available quota",
+        "--smart", action="store_true", default=False, help="Auto-switch to best quota"
     )
     switch_p.add_argument(
-        "--model",
-        choices=["gemini", "claude", "gpt"],
-        default="gemini",
-        help="Target model tier to evaluate for --smart (default: gemini)",
+        "--model", choices=["gemini", "claude", "gpt"], default="gemini", help="Target model tier"
     )
     switch_p.add_argument(
-        "--no-cache",
-        action="store_true",
-        default=False,
-        help="Bypass quota cache when evaluating candidates for smart switching",
+        "--no-cache", action="store_true", default=False, help="Bypass quota cache"
     )
 
-    # next
-    next_p = sub.add_parser(
-        "next", parents=[common_parser], help="Rotate to next eligible standby profile"
-    )
+    next_p = sub.add_parser("next", parents=[common], help="Rotate to next eligible standby")
     next_p.add_argument("--reason", default="manual", help="Reason for rotation (default: manual)")
     next_p.add_argument(
-        "--cooldown",
-        type=int,
-        default=DEFAULT_COOLDOWN_MINUTES,
-        help=f"Cooldown duration in minutes (default: {DEFAULT_COOLDOWN_MINUTES})",
+        "--cooldown", type=int, default=DEFAULT_COOLDOWN_MINUTES, help="Cooldown duration in min"
     )
 
-    # quota
-    quota_p = sub.add_parser("quota", parents=[common_parser], help="Check Cloud Code Assist quota")
+    quota_p = sub.add_parser("quota", parents=[common], help="Check Cloud Code Assist quota")
     quota_p.add_argument(
-        "name",
-        nargs="?",
-        default=None,
-        help="Profile name (default: all profiles in vault)",
+        "name", nargs="?", default=None, help="Profile name (default: all profiles in vault)"
     )
     quota_p.add_argument(
-        "--no-cache",
-        action="store_true",
-        default=False,
-        help="Bypass quota cache and query Cloud Code Assist API directly",
+        "--no-cache", action="store_true", default=False, help="Bypass quota cache"
     )
 
-    # refresh
-    refresh_p = sub.add_parser(
-        "refresh",
-        parents=[common_parser],
-        help="Refresh OAuth access token for vault accounts",
+    refresh_p = sub.add_parser("refresh", parents=[common], help="Refresh OAuth tokens")
+    refresh_p.add_argument(
+        "name", nargs="?", default=None, help="Profile name (default: all profiles in vault)"
     )
     refresh_p.add_argument(
-        "name",
-        nargs="?",
-        default=None,
-        help="Profile name (default: all profiles in vault)",
-    )
-    refresh_p.add_argument(
-        "--force",
-        action="store_true",
-        default=False,
-        help="Force token refresh even if not expired",
+        "--force", action="store_true", default=False, help="Force token refresh even if valid"
     )
 
-    # whoami
-    sub.add_parser("whoami", parents=[common_parser], help="Show active profile and token status")
+    sub.add_parser("whoami", parents=[common], help="Show active profile and token status")
 
-    # remove
-    remove_p = sub.add_parser(
-        "remove", parents=[common_parser], help="Remove a profile from the vault"
-    )
+    remove_p = sub.add_parser("remove", parents=[common], help="Remove a profile from vault")
     remove_p.add_argument("name", help="Profile name to remove")
 
-    # watch
-    watch_p = sub.add_parser(
-        "watch", parents=[common_parser], help="Start reactive log tailer daemon"
+    watch_p = sub.add_parser("watch", parents=[common], help="Start reactive log tailer daemon")
+    watch_p.add_argument(
+        "--poll-seconds", type=float, default=DEFAULT_POLL_SECONDS, help="Log polling interval"
     )
     watch_p.add_argument(
-        "--poll-seconds",
-        type=float,
-        default=DEFAULT_POLL_SECONDS,
-        help=f"Log polling interval in seconds (default: {DEFAULT_POLL_SECONDS})",
-    )
-    watch_p.add_argument(
-        "--cooldown",
-        type=int,
-        default=None,
-        help="Cooldown override in minutes (default: auto-detected from log hints)",
+        "--cooldown", type=int, default=None, help="Cooldown override in minutes"
     )
 
-    # tools
-    tools_p = sub.add_parser(
-        "tools", parents=[common_parser], help="List supported developer CLI tools"
-    )
-    tools_p.add_argument(
-        "action",
-        nargs="?",
-        default="list",
-        choices=["list"],
-        help="Action (default: list)",
-    )
+    tools_p = sub.add_parser("tools", parents=[common], help="List supported developer CLI tools")
+    tools_p.add_argument("action", nargs="?", default="list", choices=["list"], help="Action")
 
-    # completion
     p_comp = sub.add_parser("completion", help="Generate shell auto-completion script")
     p_comp.add_argument("shell", choices=SUPPORTED_SHELLS, help="Target shell (bash or zsh)")
 
-    # help
-    help_p = sub.add_parser("help", parents=[common_parser], help="Show help for a command")
-    help_p.add_argument(
-        "subcommand",
-        nargs="?",
-        default=None,
-        help="Command to show help for (default: show main help)",
-    )
+    help_p = sub.add_parser("help", parents=[common], help="Show help for a command")
+    help_p.add_argument("subcommand", nargs="?", default=None, help="Command to show help for")
 
     return parser
 
@@ -1128,22 +276,11 @@ def main(argv: list[str] | None = None) -> int:
     registry = get_default_registry()
     raw_args = list(argv)
 
-    # Global -h / --help early intercept (before argparse, to avoid default argparse output)
     if "-h" in raw_args or "--help" in raw_args:
-        no_color = "--no-color" in raw_args
-        return cmd_help(no_color=no_color)
+        return cmd_help(no_color="--no-color" in raw_args)
 
-    # Global -V / --version check: if passed anywhere, show version and exit
     if "-V" in raw_args or "--version" in raw_args:
-        json_out = "--json" in raw_args
-        no_color = "--no-color" in raw_args
-        return cmd_version(json_out=json_out, no_color=no_color)
-
-    # Detect tool-first invocation: promux <tool> <command> [args...]
-    # If the first non-option positional argument matches a registered tool name,
-    # route to that tool adapter.
-    target_tool = None
-    remaining_args = raw_args
+        return cmd_version(json_out="--json" in raw_args, no_color="--no-color" in raw_args)
 
     first_pos_idx = None
     for i, arg in enumerate(raw_args):
@@ -1152,27 +289,23 @@ def main(argv: list[str] | None = None) -> int:
             break
 
     tool_name_used: str | None = None
+    remaining_args = raw_args
     if first_pos_idx is not None and registry.has_tool(raw_args[first_pos_idx]):
         tool_name_used = raw_args[first_pos_idx]
         target_tool = registry.get(tool_name_used)
         remaining_args = raw_args[:first_pos_idx] + raw_args[first_pos_idx + 1:]
-        # Tool-first help: promux <tool> help [...]
-        # Check if "help" is the next positional after the tool name
         next_pos = None
         for arg in remaining_args:
             if not arg.startswith("-"):
                 next_pos = arg
                 break
         if next_pos == "help":
-            no_color = "--no-color" in raw_args
-            return cmd_help(tool=tool_name_used, no_color=no_color)
+            return cmd_help(tool=tool_name_used, no_color="--no-color" in raw_args)
     else:
         target_tool = registry.default_tool()
 
-    # No command provided: show help
     if not remaining_args or all(a.startswith("-") for a in remaining_args):
-        no_color = "--no-color" in raw_args
-        return cmd_help(no_color=no_color)
+        return cmd_help(no_color="--no-color" in raw_args)
 
     parser = build_parser()
     try:
@@ -1180,24 +313,24 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 2
 
+    configure_cli_logging(
+        verbose=getattr(args, "verbose", 0),
+        quiet=getattr(args, "quiet", False),
+    )
+
     json_out = getattr(args, "json", False)
     no_color = getattr(args, "no_color", False)
 
     try:
-        # Help subcommand dispatch
         if args.command == "help":
             return cmd_help(subcommand=getattr(args, "subcommand", None), no_color=no_color)
-
         if args.command == "version":
             return cmd_version(json_out=json_out, no_color=no_color)
-
         if args.command == "tools":
             return cmd_tools(registry, json_out)
-
         if args.command == "completion":
             return cmd_completion(args.shell)
 
-        # Tool capability validation
         if args.command in COMMAND_CAPABILITIES:
             required_cap = COMMAND_CAPABILITIES[args.command]
             caps = target_tool.list_capabilities()
@@ -1219,13 +352,17 @@ def main(argv: list[str] | None = None) -> int:
             if args.smart:
                 if "quota" not in target_tool.list_capabilities():
                     raise RuntimeError(
-                        f"Tool '{target_tool.name}' does not support smart quota switching ('quota' capability required)."
+                        f"Tool '{target_tool.name}' does not support smart quota switching "
+                        "('quota' capability required)."
                     )
             elif not args.name:
                 if json_out:
                     print(
                         json.dumps(
-                            {"success": False, "error": "must specify account name or pass --smart"},
+                            {
+                                "success": False,
+                                "error": "must specify account name or pass --smart",
+                            },
                             indent=2,
                         )
                     )
@@ -1244,7 +381,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "next":
             return cmd_next(failover, args.reason, args.cooldown, json_out)
         elif args.command == "quota":
-            return cmd_quota(storage, args.name, json_out, no_cache=getattr(args, "no_cache", False))
+            return cmd_quota(
+                storage, args.name, json_out, no_cache=getattr(args, "no_cache", False)
+            )
         elif args.command == "refresh":
             return cmd_refresh(storage, args.name, args.force, json_out)
         elif args.command == "whoami":

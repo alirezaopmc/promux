@@ -1,9 +1,10 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+
 from promux.formatters import (
-    parse_iso_utc,
-    format_relative_countdown,
     format_quota_cell,
     format_quota_detail,
+    format_relative_countdown,
+    parse_iso_utc,
 )
 
 
@@ -97,3 +98,20 @@ def test_format_quota_detail():
         format_quota_detail(0.85, t_3d_4h, now=base_now)
         == "85.0% (3d 4h left - Sep 12 16:00 UTC)"
     )
+
+
+def test_format_expiry_table():
+    from promux.formatters import format_expiry_table
+
+    assert format_expiry_table(None) == "-"
+    assert format_expiry_table("") == "-"
+    assert format_expiry_table("invalid-date") == "invalid-date"
+
+    # Valid UTC ISO timestamp
+    res = format_expiry_table("2026-09-09T03:15:00Z")
+    assert res == "2026-09-09 03:15:00"
+
+    # Valid offset ISO timestamp converts to UTC
+    res_offset = format_expiry_table("2026-09-09T08:15:00+05:00")
+    assert res_offset == "2026-09-09 03:15:00"
+

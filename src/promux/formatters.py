@@ -1,4 +1,7 @@
+import logging
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger(__name__)
 
 
 def parse_iso_utc(iso_str: str | None) -> datetime | None:
@@ -12,7 +15,27 @@ def parse_iso_utc(iso_str: str | None) -> datetime | None:
             return dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
     except Exception:
+        logger.debug("Failed to parse ISO UTC datetime from %r", iso_str, exc_info=True)
         return None
+
+
+def format_expiry_table(expiry_str: str | None) -> str:
+    """Format an ISO timestamp to 'YYYY-MM-DD HH:MM:SS' for table display."""
+    if not expiry_str:
+        return "-"
+    try:
+        clean = expiry_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        logger.debug("Failed to format expiry timestamp: %r", expiry_str, exc_info=True)
+        return expiry_str
+
+
+_format_expiry_table = format_expiry_table
+
 
 
 def format_relative_countdown(

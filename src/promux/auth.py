@@ -13,7 +13,7 @@ import urllib.request
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .constants import (
     DEFAULT_TOKEN_EXPIRY_BUFFER_SECONDS,
@@ -325,16 +325,23 @@ def _refresh_token_file(
     cli_mod = sys.modules.get("promux.cli")
     if cli_mod:
         cli_refresh = getattr(cli_mod, "_refresh_token_file", None)
-        if cli_refresh is not None and getattr(cli_refresh, "__code__", None) != _refresh_token_file.__code__:
+        if (
+            cli_refresh is not None
+            and getattr(cli_refresh, "__code__", None) != _refresh_token_file.__code__
+        ):
             try:
-                return cli_refresh(token_path, token_data, storage=storage)
+                return cast("str | None", cli_refresh(token_path, token_data, storage=storage))
             except TypeError:
-                return cli_refresh(token_path, token_data)
+                return cast("str | None", cli_refresh(token_path, token_data))
 
     _set_last_refresh_method("failed")
     _set_last_refresh_revoked(False)
 
-    native_fn = getattr(cli_mod, "_refresh_token_native", _refresh_token_native) if cli_mod else _refresh_token_native
+    native_fn = (
+        getattr(cli_mod, "_refresh_token_native", _refresh_token_native)
+        if cli_mod
+        else _refresh_token_native
+    )
     fallback_fn = (
         getattr(cli_mod, "_refresh_token_fallback_agy", _refresh_token_fallback_agy)
         if cli_mod
@@ -372,7 +379,7 @@ def get_or_refresh_access_token(
     if cli_mod:
         cli_fn = getattr(cli_mod, "_get_or_refresh_access_token", None)
         if cli_fn is not None and getattr(cli_fn, "__module__", "") != "promux.auth":
-            return cli_fn(token_path, storage=storage)
+            return cast("str | None", cli_fn(token_path, storage=storage))
 
     token_data = read_token_data(token_path)
     if not token_data:

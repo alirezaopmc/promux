@@ -42,9 +42,9 @@ class AgyAdapter(BaseToolAdapter):
     def fetch_quota(
         self, storage: StorageEngine, account_name: str
     ) -> tuple[QuotaSummary | None, str | None, str | None]:
-        from ..cli import _fetch_account_quota
+        from ..commands.quota import _dispatch_fetch_quota
 
-        res = _fetch_account_quota(storage, account_name)
+        res = _dispatch_fetch_quota(storage, account_name)
         return res[0], res[1], res[2]
 
     @property
@@ -63,6 +63,6 @@ class AgyAdapter(BaseToolAdapter):
     def refresh_account(
         self, storage: StorageEngine, account_name: str, force: bool = False
     ) -> tuple[bool, str]:
-        from ..cli import _refresh_account_token
+        from ..commands.quota import _dispatch_refresh_account
 
-        return _refresh_account_token(storage, account_name, force=force)
+        return _dispatch_refresh_account(storage, account_name, force=force)

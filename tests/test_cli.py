@@ -2590,7 +2590,9 @@ def test_quota_cache_invalidation_on_401(tmp_path, sample_token_dict, monkeypatc
     )
     monkeypatch.setattr("promux.cli._refresh_token_file", lambda p, td, storage=None: None)
 
-    qs_err, pid_err, err_msg, cached_err = _fetch_account_quota(storage, "acc1", no_cache=True, cache=cache)
+    qs_err, pid_err, err_msg, cached_err = _fetch_account_quota(
+        storage, "acc1", no_cache=True, cache=cache
+    )
     assert err_msg is not None
     assert "401" in err_msg
     # Cache must now be invalidated!
@@ -2599,7 +2601,7 @@ def test_quota_cache_invalidation_on_401(tmp_path, sample_token_dict, monkeypatc
 
 def test_cmd_switch_smart_no_cache_flag(tmp_path, sample_token_dict, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
-    from promux.cli import main, get_storage
+    from promux.cli import main
     from promux.models import QuotaSummary
 
     main(["save", "acc1", "--email", "1@test.com"])
@@ -2611,7 +2613,8 @@ def test_cmd_switch_smart_no_cache_flag(tmp_path, sample_token_dict, monkeypatch
     def mock_fetch(st, acct, no_cache=False, cache=None):
         calls.append({"acct": acct, "no_cache": no_cache, "cache": cache})
         if acct == "acc2":
-            return QuotaSummary(gemini_5h_remaining=0.9, gemini_weekly_remaining=0.9), "p2", None, False
+            qs = QuotaSummary(gemini_5h_remaining=0.9, gemini_weekly_remaining=0.9)
+            return qs, "p2", None, False
         return QuotaSummary(gemini_5h_remaining=0.1, gemini_weekly_remaining=0.1), "p1", None, False
 
     monkeypatch.setattr("promux.cli._fetch_account_quota", mock_fetch)
@@ -2633,3 +2636,68 @@ def test_cmd_switch_smart_no_cache_flag(tmp_path, sample_token_dict, monkeypatch
     assert any(c["acct"] == "acc2" and c["no_cache"] is True for c in calls)
 
 
+def test_commands_reexports():
+    import promux.commands as cmds
+
+    expected = [
+        "cmd_completion",
+        "cmd_list",
+        "cmd_next",
+        "cmd_quota",
+        "cmd_refresh",
+        "cmd_remove",
+        "cmd_save",
+        "cmd_switch",
+        "cmd_tools",
+        "cmd_watch",
+        "cmd_whoami",
+    ]
+    for name in expected:
+        assert hasattr(cmds, name), f"Missing {name} in promux.commands"
+        assert callable(getattr(cmds, name))
+
+
+def test_cli_remove_nonexistent_json_no_double_print(tmp_path, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch)
+
+    rc = main(["remove", "ghost", "--json"])
+    assert rc == 1
+    out, err = capsys.readouterr()
+    res = json.loads(out)
+    assert res["success"] is False
+    assert "not found" in res["error"].lower()
+    assert err == ""
+
+
+def test_cli_switch_nonexistent_json_no_double_print(tmp_path, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch)
+
+    rc = main(["switch", "ghost", "--json"])
+    assert rc == 1
+    out, err = capsys.readouterr()
+    res = json.loads(out)
+    assert res["success"] is False
+    assert "not found" in res["error"].lower()
+    assert err == ""
+
+
+def test_cli_quota_nonexistent_json_no_double_print(tmp_path, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch)
+
+    rc = main(["quota", "ghost", "--json"])
+    assert rc == 1
+    out, err = capsys.readouterr()
+    res = json.loads(out)
+    assert "not found" in res["error"].lower()
+    assert err == ""
+
+
+def test_cli_refresh_nonexistent_json_no_double_print(tmp_path, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch)
+
+    rc = main(["refresh", "ghost", "--json"])
+    assert rc == 1
+    out, err = capsys.readouterr()
+    res = json.loads(out)
+    assert "not found" in res["error"].lower()
+    assert err == ""
