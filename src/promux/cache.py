@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import threading
 from datetime import datetime, timezone
@@ -11,6 +12,8 @@ from .constants import (
 )
 from .lock import file_lock
 from .models import QuotaSummary
+
+logger = logging.getLogger(__name__)
 
 
 class QuotaCache:
@@ -33,7 +36,7 @@ class QuotaCache:
                 if val >= 0:
                     return val
             except ValueError:
-                pass
+                logger.debug("Invalid int in PROMUX_QUOTA_CACHE_TTL: %r", env_val, exc_info=True)
 
         if self.config_file.exists():
             try:
@@ -44,7 +47,7 @@ class QuotaCache:
                         if isinstance(ttl, (int, float)) and ttl >= 0:
                             return int(ttl)
             except Exception:
-                pass
+                logger.debug("Failed to read quota_cache_ttl_seconds from config", exc_info=True)
 
         return DEFAULT_QUOTA_CACHE_TTL_SECONDS
 
@@ -56,6 +59,7 @@ class QuotaCache:
                 data = json.load(f)
                 return data if isinstance(data, dict) and "accounts" in data else {"accounts": {}}
         except Exception:
+            logger.debug("Failed to read cache file from %s", self.cache_file, exc_info=True)
             return {"accounts": {}}
 
     def _write_cache(self, data: dict[str, Any]) -> None:
@@ -66,14 +70,15 @@ class QuotaCache:
         try:
             with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
-            os.chmod(tmp_file, 0o600)
+            if os.name != "nt":
+                os.chmod(tmp_file, 0o600)
             os.replace(tmp_file, self.cache_file)
         finally:
             if tmp_file.exists():
                 try:
                     tmp_file.unlink()
                 except OSError:
-                    pass
+                    logger.debug("Failed to unlink tmp cache file %s", tmp_file, exc_info=True)
 
     def get(self, account_name: str) -> QuotaSummary | None:
         """Return cached QuotaSummary if present and not expired, else None."""
@@ -101,6 +106,9 @@ class QuotaCache:
             if (now - cached_at).total_seconds() > ttl:
                 return None
         except Exception:
+            logger.debug(
+                "Failed to parse cached_at timestamp for account %s", account_name, exc_info=True
+            )
             return None
 
         try:
@@ -115,6 +123,11 @@ class QuotaCache:
                 third_party_weekly_reset=quota_data.get("third_party_weekly_reset"),
             )
         except Exception:
+            logger.debug(
+                "Failed to construct QuotaSummary from cached data for account %s",
+                account_name,
+                exc_info=True,
+            )
             return None
 
     def set(self, account_name: str, quota: QuotaSummary) -> None:

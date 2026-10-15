@@ -1,3 +1,4 @@
+import logging
 import re
 import time
 from collections.abc import Callable
@@ -15,6 +16,8 @@ from .constants import (
     RESOURCE_EXHAUSTED_RE,
     WEEKLY_QUOTA_RE,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -70,6 +73,7 @@ class LogWatcher:
                 try:
                     return p.stat().st_mtime
                 except OSError:
+                    logger.debug("Failed to stat %s for mtime", p, exc_info=True)
                     return 0.0
 
             log_files = [p for p in log_dir.glob("*.log") if p.is_file()]
@@ -83,6 +87,7 @@ class LogWatcher:
                 self.offsets[f] = st.st_size
                 self.inodes[f] = st.st_ino
             except OSError:
+                logger.debug("Failed to stat %s during offset init", f, exc_info=True)
                 self.offsets[f] = 0
 
     def parse_reset_minutes(self, hint: str | None) -> int:
@@ -147,6 +152,7 @@ class LogWatcher:
                             )
                             break
             except OSError:
+                logger.debug("Failed to read log file %s during run_once", path, exc_info=True)
                 continue
         return matches
 
@@ -218,7 +224,7 @@ class LogWatcher:
                 try:
                     self.check_and_renew_tokens()
                 except Exception:
-                    pass
+                    logger.debug("check_and_renew_tokens encountered an error", exc_info=True)
                 last_token_check = now
 
             try:

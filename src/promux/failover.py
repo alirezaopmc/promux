@@ -1,4 +1,5 @@
 import concurrent.futures
+import logging
 import math
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -15,6 +16,8 @@ from .models import (
     SmartRotationResult,
 )
 from .storage import StorageEngine
+
+logger = logging.getLogger(__name__)
 
 
 class FailoverEngine:
@@ -160,6 +163,9 @@ class FailoverEngine:
                 qs, _, _ = quota_fetcher(candidate.name)
                 return candidate, qs
             except Exception:
+                logger.debug(
+                    "Failed to fetch quota for candidate %s", candidate.name, exc_info=True
+                )
                 return candidate, None
 
         max_workers = min(20, max(1, len(eligible)))
@@ -215,6 +221,9 @@ class FailoverEngine:
             try:
                 active_qs, _, _ = quota_fetcher(active_name)
             except Exception:
+                logger.debug(
+                    "Failed to fetch quota for active account %s", active_name, exc_info=True
+                )
                 active_qs = None
 
         if not self.storage.switch_profile(best.name):

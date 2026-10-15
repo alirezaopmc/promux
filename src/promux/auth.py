@@ -256,12 +256,12 @@ def _refresh_token_fallback_agy(token_path: Path, storage: StorageEngine) -> str
             try:
                 is_same = token_path.resolve() == storage.live_token.resolve()
             except Exception:
-                pass
+                logger.debug("Failed to resolve token_path against live_token", exc_info=True)
             if is_same:
                 try:
                     subprocess.run(["agy", "models"], capture_output=True, timeout=10)
                 except (subprocess.SubprocessError, OSError):
-                    pass
+                    logger.debug("subprocess agy models failed for same-path refresh", exc_info=True)
                 new_data = read_token_data(storage.live_token)
                 new_acc = extract_access_token(new_data)
                 new_exp = extract_expiry(new_data)
@@ -287,7 +287,7 @@ def _refresh_token_fallback_agy(token_path: Path, storage: StorageEngine) -> str
                 try:
                     subprocess.run(["agy", "models"], capture_output=True, timeout=10)
                 except (subprocess.SubprocessError, OSError):
-                    pass
+                    logger.debug("subprocess agy models fallback failed", exc_info=True)
                 new_data = read_token_data(storage.live_token)
                 new_acc = extract_access_token(new_data)
                 new_exp = extract_expiry(new_data)

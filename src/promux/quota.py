@@ -1,4 +1,5 @@
 import json
+import logging
 import urllib.error
 import urllib.request
 from typing import Any
@@ -13,6 +14,8 @@ from .constants import (
     get_default_http_timeout,
 )
 from .models import QuotaSummary
+
+logger = logging.getLogger(__name__)
 
 
 class QuotaClient:
@@ -50,6 +53,7 @@ class QuotaClient:
                     data = json.loads(resp.read().decode("utf-8"))
                     return data if isinstance(data, dict) else {}
             except (urllib.error.HTTPError, urllib.error.URLError, OSError) as e:
+                logger.debug("POST %s failed: %s", url, e, exc_info=True)
                 last_error = e
                 err_str = str(e).lower()
                 if isinstance(e, (TimeoutError, urllib.error.URLError)) and "timed out" in err_str:
@@ -82,6 +86,7 @@ class QuotaClient:
                 return data.get("email")
             return None
         except Exception:
+            logger.debug("Failed to fetch email from UserInfo endpoint", exc_info=True)
             return None
 
     def load_metadata(self) -> dict[str, Any]:

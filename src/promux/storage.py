@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import shutil
 import threading
@@ -11,6 +12,8 @@ from typing import Any
 from .constants import GEMINI_CLI_HOME, PROMUX_HOME
 from .lock import file_lock
 from .models import AccountMeta
+
+logger = logging.getLogger(__name__)
 
 
 class StorageEngine:
@@ -38,7 +41,8 @@ class StorageEngine:
         tmp_path = target_path.with_suffix(".tmp")
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
-        os.chmod(tmp_path, 0o600)
+        if os.name != "nt":
+            os.chmod(tmp_path, 0o600)
         os.replace(tmp_path, target_path)
 
     @contextmanager
@@ -66,6 +70,11 @@ class StorageEngine:
                 data = json.load(f)
                 return data if isinstance(data, dict) else {"active": None, "accounts": {}}
         except (json.JSONDecodeError, OSError):
+            logger.debug(
+                "Failed to read state file from %s, defaulting to empty state",
+                self.state_file,
+                exc_info=True,
+            )
             return {"active": None, "accounts": {}}
 
     def save_state(self, state: dict[str, Any]) -> None:
@@ -136,6 +145,10 @@ class StorageEngine:
                             if pr and lr and pr != lr:
                                 should_sync = False
                         except Exception:
+                            logger.debug(
+                                "Failed to compare token refresh tokens during sync",
+                                exc_info=True,
+                            )
                             should_sync = True
                     if should_sync:
                         tmp_prev = prev_vault_token.with_suffix(".tmp")
@@ -161,9 +174,12 @@ class StorageEngine:
                                 tmp_src.chmod(0o600)
                             os.replace(tmp_src, src_token)
                     except Exception:
-                        pass
+                        logger.debug(
+                            "Failed to update access token in src_token file",
+                            exc_info=True,
+                        )
             except Exception:
-                pass
+                logger.debug("Auto-refresh of src_token before switch failed", exc_info=True)
 
             # I2: Atomic Hot-Swapping of live_token
             self.live_token.parent.mkdir(parents=True, exist_ok=True)

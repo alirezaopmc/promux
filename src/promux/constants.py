@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Type annotations for lazily evaluated module attributes (PEP 562)
 PROMUX_HOME: Path
@@ -131,7 +134,7 @@ def detect_code_assist_url(gemini_home: Path | None = None) -> str:
                     if m:
                         return f"https://{m.group(1)}"
         except OSError:
-            pass
+            logger.debug("Failed to read cli.log for code assist URL", exc_info=True)
     return CODE_ASSIST_BASE_URL
 
 
@@ -158,7 +161,7 @@ def get_default_http_timeout(config_file: Path | None = None) -> float:
             if val > 0:
                 return val
         except ValueError:
-            pass
+            logger.debug("Invalid float in PROMUX_HTTP_TIMEOUT: %r", env_val, exc_info=True)
 
     cfg = config_file or _get_lazy_path("CONFIG_FILE")
     if cfg.exists():
@@ -170,7 +173,7 @@ def get_default_http_timeout(config_file: Path | None = None) -> float:
                     if isinstance(t, (int, float)) and t > 0:
                         return float(t)
         except Exception:
-            pass
+            logger.debug("Failed to read http_timeout_seconds from config: %s", cfg, exc_info=True)
 
     return 5.0
 

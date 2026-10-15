@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
@@ -10,6 +11,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .constants import DEFAULT_LOCK_TIMEOUT
+
+logger = logging.getLogger(__name__)
 
 if sys.platform == "win32":
     from ._lock_windows import _acquire_lock, _release_lock
@@ -67,5 +70,5 @@ def file_lock(
             try:
                 _release_lock(fd)
             except OSError:
-                pass
+                logger.debug("Failed to release lock on fd %s", fd, exc_info=True)
         os.close(fd)
