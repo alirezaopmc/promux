@@ -1,0 +1,1699 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Promux — Antigravity Profile Multiplexer</title>
+  
+  <!-- Taskbar and Window Icons -->
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="256x256" href="/icon-256.png">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#080b11">
+
+  <style>
+    :root {
+      --bg: #080b11;
+      --surface: #0e1526;
+      --surface-elevated: #151f38;
+      --surface-hover: #1c2a4c;
+      --surface-active: #11203d;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-focus: rgba(6, 182, 212, 0.5);
+      --border-active: #06b6d4;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-subtle: #64748b;
+      --accent: #06b6d4;
+      --accent-gradient: linear-gradient(135deg, #06b6d4 0%, #3b82f6 50%, #8b5cf6 100%);
+      --smart-gradient: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+      --emerald: #10b981;
+      --emerald-bg: rgba(16, 185, 129, 0.12);
+      --amber: #f59e0b;
+      --amber-bg: rgba(245, 158, 11, 0.12);
+      --rose: #f43f5e;
+      --rose-bg: rgba(244, 63, 94, 0.12);
+      --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", "SF Pro Display", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: var(--font-family);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(circle at 10% 10%, rgba(6, 182, 212, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 90% 90%, rgba(139, 92, 246, 0.06) 0%, transparent 40%);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+      overflow-x: hidden;
+      font-size: 13px;
+    }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.25); }
+
+    /* Compact Header */
+    header {
+      background: rgba(14, 21, 38, 0.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      padding: 8px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-img {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      object-fit: contain;
+      box-shadow: 0 2px 10px rgba(6, 182, 212, 0.3);
+    }
+
+    .brand-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(to right, #ffffff, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .version-pill {
+      font-size: 0.65rem;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 1px 6px;
+      border-radius: 5px;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* Status Pills in Header */
+    .header-status-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .sync-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.72rem;
+      padding: 3px 9px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    .sync-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--emerald);
+      box-shadow: 0 0 6px var(--emerald);
+    }
+
+    .sync-pill.syncing .sync-dot {
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+      animation: pulse 0.8s infinite;
+    }
+
+    .ide-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.72rem;
+      padding: 3px 9px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .ide-pill:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .ide-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-subtle);
+    }
+
+    .ide-pill.running .ide-dot {
+      background: var(--emerald);
+      box-shadow: 0 0 6px var(--emerald);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Auto-restart toggle in header */
+    .header-toggle-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      padding: 3px 8px;
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 7px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      transition: all 0.15s ease;
+    }
+
+    .btn:hover {
+      background: var(--surface-hover);
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+
+    .btn-primary {
+      background: var(--accent-gradient);
+      border: none;
+      color: white;
+      box-shadow: 0 2px 10px rgba(6, 182, 212, 0.25);
+    }
+
+    .btn-primary:hover {
+      filter: brightness(1.1);
+      box-shadow: 0 3px 14px rgba(6, 182, 212, 0.4);
+    }
+
+    .btn-smart {
+      background: var(--smart-gradient);
+      border: none;
+      color: white;
+      box-shadow: 0 2px 10px rgba(139, 92, 246, 0.3);
+    }
+
+    .btn-smart:hover {
+      filter: brightness(1.1);
+      box-shadow: 0 3px 14px rgba(139, 92, 246, 0.45);
+    }
+
+    .btn-sm {
+      padding: 4px 8px;
+      font-size: 0.72rem;
+      border-radius: 6px;
+    }
+
+    .btn-danger {
+      color: var(--rose);
+      border-color: rgba(244, 63, 94, 0.3);
+    }
+    .btn-danger:hover {
+      background: var(--rose-bg);
+      border-color: var(--rose);
+    }
+
+    .spin {
+      animation: spin 0.9s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 1; }
+    }
+
+    /* Main Container */
+    main {
+      padding: 14px 20px;
+      flex: 1;
+      max-width: 1350px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    /* Section Header */
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      gap: 10px;
+    }
+
+    .section-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      letter-spacing: -0.01em;
+    }
+
+    .counter-badge {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 1px 7px;
+      border-radius: 10px;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    /* Accounts Grid - Compact */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+      gap: 12px;
+    }
+
+    /* Compact Account Card */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+    }
+
+    .card:hover {
+      border-color: rgba(255, 255, 255, 0.16);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+    }
+
+    .card.is-active {
+      background: var(--surface-active);
+      border-color: var(--border-active);
+      box-shadow: 0 0 20px rgba(6, 182, 212, 0.18);
+    }
+
+    .card.is-active::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: var(--accent-gradient);
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .card-identity {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .card-title-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .card-name {
+      font-size: 0.92rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .card-alias {
+      font-size: 0.72rem;
+      color: var(--accent);
+      font-weight: 600;
+      background: rgba(6, 182, 212, 0.08);
+      border: 1px solid rgba(6, 182, 212, 0.2);
+      padding: 0 5px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+
+    .edit-name-btn {
+      background: none;
+      border: none;
+      color: var(--text-subtle);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      padding: 2px;
+      border-radius: 4px;
+      transition: color 0.15s;
+    }
+
+    .edit-name-btn:hover {
+      color: var(--accent);
+    }
+
+    .card-badges {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .badge {
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 5px;
+      letter-spacing: 0.02em;
+    }
+
+    .badge-active {
+      background: rgba(6, 182, 212, 0.15);
+      border: 1px solid rgba(6, 182, 212, 0.4);
+      color: #38bdf8;
+    }
+
+    .badge-standby {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-muted);
+    }
+
+    .badge-cooldown {
+      background: var(--amber-bg);
+      border: 1px solid var(--amber);
+      color: var(--amber);
+    }
+
+    .card-email {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .card-email:hover {
+      color: var(--text);
+    }
+
+    /* Quotas Container - Slim */
+    .quotas-container {
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      border-radius: 7px;
+      padding: 7px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .quota-row {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .quota-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.72rem;
+    }
+
+    .quota-label {
+      color: var(--text-muted);
+    }
+
+    .quota-stats {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .quota-pct {
+      font-weight: 700;
+      font-size: 0.73rem;
+      color: var(--text);
+    }
+
+    .quota-countdown {
+      font-size: 0.67rem;
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.1);
+      border-radius: 4px;
+      padding: 0 4px;
+    }
+
+    .progress-bar {
+      height: 5px;
+      background: rgba(255, 255, 255, 0.07);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+
+    .fill-high { background: linear-gradient(90deg, #10b981, #34d399); }
+    .fill-medium { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .fill-low { background: linear-gradient(90deg, #f43f5e, #fb7185); }
+
+    /* Card Actions */
+    .card-actions {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 2px;
+    }
+
+    .card-actions .btn-main {
+      flex: 1;
+      justify-content: center;
+    }
+
+    /* Auto-Failover Watcher Panel - Compact */
+    .daemon-bar {
+      margin-top: 22px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+
+    .daemon-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .daemon-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .shield-icon {
+      width: 32px;
+      height: 32px;
+      background: rgba(6, 182, 212, 0.1);
+      border: 1px solid rgba(6, 182, 212, 0.25);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Switch Toggle */
+    .switch-toggle {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+    }
+
+    .switch-toggle input { opacity: 0; width: 0; height: 0; }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: rgba(255, 255, 255, 0.15);
+      transition: 0.25s;
+      border-radius: 20px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.25s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider { background-color: #06b6d4; }
+    input:checked + .slider:before { transform: translateX(16px); }
+
+    /* Events Feed */
+    .events-feed {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      border-radius: 7px;
+      padding: 8px 12px;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 0.72rem;
+      max-height: 90px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .event-line {
+      display: flex;
+      gap: 8px;
+      color: #94a3b8;
+    }
+
+    .event-line.SUCCESS { color: #34d399; }
+    .event-line.WARN { color: #fbbf24; }
+    .event-line.ERROR { color: #f87171; }
+
+    /* Modals */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(10px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+
+    .modal {
+      background: #0e1526;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 14px;
+      width: 90%;
+      max-width: 440px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
+    }
+
+    .modal-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .form-label {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .form-input, .form-textarea {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 7px;
+      padding: 8px 12px;
+      color: var(--text);
+      font-size: 0.8rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .form-input:focus, .form-textarea:focus {
+      border-color: var(--accent);
+    }
+
+    /* Big Google Login Hero in Add Modal */
+    .google-add-hero {
+      background: linear-gradient(135deg, rgba(66, 133, 244, 0.1) 0%, rgba(52, 168, 83, 0.08) 100%);
+      border: 1px solid rgba(66, 133, 244, 0.25);
+      border-radius: 10px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      text-align: center;
+      align-items: center;
+    }
+
+    .btn-google-big {
+      width: 100%;
+      padding: 10px 16px;
+      font-size: 0.86rem;
+      background: #ffffff;
+      color: #1f2937;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+      transition: all 0.2s;
+    }
+
+    .btn-google-big:hover {
+      background: #f1f5f9;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(66, 133, 244, 0.3);
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 4px;
+      background: rgba(0, 0, 0, 0.35);
+      padding: 3px;
+      border-radius: 8px;
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 5px 8px;
+      font-size: 0.72rem;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .tab-btn.active {
+      background: var(--surface-hover);
+      color: var(--text);
+    }
+
+    /* Exhaustion Popup Modal */
+    .exhaust-alert-box {
+      border-left: 3px solid var(--amber);
+      background: rgba(245, 158, 11, 0.08);
+      padding: 10px 14px;
+      border-radius: 7px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-size: 0.8rem;
+      line-height: 1.5;
+    }
+
+    /* Toasts */
+    #toast-container {
+      position: fixed;
+      bottom: 18px;
+      right: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 200;
+    }
+
+    .toast {
+      background: #111a30;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      color: var(--text);
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 0.76rem;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      animation: toastIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .toast.success { border-color: rgba(16, 185, 129, 0.5); }
+    .toast.error { border-color: rgba(244, 63, 94, 0.5); }
+
+    @keyframes toastIn {
+      from { transform: translateY(12px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <img src="/favicon.ico" class="logo-img" alt="Promux">
+      <div class="brand-title">
+        <span>Promux</span>
+        <span class="version-pill">v2.1 Win</span>
+      </div>
+
+      <div class="header-status-group">
+        <!-- Live Cloud Sync -->
+        <span class="sync-pill" id="sync-pill">
+          <span class="sync-dot"></span>
+          <span id="sync-label">Synced</span>
+        </span>
+
+        <!-- Antigravity IDE Status Indicator & Restart Button -->
+        <span class="ide-pill" id="ide-pill" onclick="restartAntigravity()" title="Click to restart Google Antigravity IDE">
+          <span class="ide-dot" id="ide-dot"></span>
+          <span id="ide-label">Checking IDE...</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <!-- Auto-restart checkbox setting -->
+      <label class="header-toggle-wrap" title="When switched, automatically close and reopen Antigravity IDE">
+        <input type="checkbox" id="auto-restart-toggle" checked onchange="saveAutoRestartSetting(this.checked)">
+        <span>Auto-restart IDE on switch</span>
+      </label>
+
+      <!-- Refresh Quotas Button -->
+      <button class="btn btn-sm" onclick="refreshAllQuotas()" id="btn-refresh-all" title="Query live quotas from Google Cloud Code Assist">
+        <svg id="refresh-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+          <path d="M3 3v5h5"/>
+          <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+          <path d="M16 21h5v-5"/>
+        </svg>
+        <span>Refresh</span>
+      </button>
+
+      <!-- Add Account Button (Contains Google Sign-In) -->
+      <button class="btn btn-primary btn-sm" onclick="openAddModal()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+        <span>+ Add Account</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content Area -->
+  <main>
+    <div class="section-head">
+      <div class="section-title">
+        <span>Vaulted Accounts</span>
+        <span class="counter-badge" id="account-count">0</span>
+      </div>
+      <div style="font-size: 0.78rem; color: var(--text-muted);" id="active-summary"></div>
+    </div>
+
+    <!-- Accounts Grid -->
+    <div class="grid" id="accounts-grid">
+      <!-- Populated dynamically -->
+    </div>
+
+    <!-- Auto-Failover Watcher Panel with Smart Switch -->
+    <div class="daemon-bar">
+      <div class="daemon-header">
+        <div class="daemon-info">
+          <div class="shield-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </div>
+          <div>
+            <div style="font-weight: 700; font-size: 0.88rem;">Auto-Failover Quota Shield</div>
+            <div style="font-size: 0.73rem; color: var(--text-muted);">Monitors 429 quota exhaustion; prompts to rotate to an available healthy account.</div>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <!-- Smart Switch Button -->
+          <button class="btn btn-smart btn-sm" onclick="triggerSmartSwitch()" title="Automatically select and switch to the profile with the highest remaining quota">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>
+            </svg>
+            <span>Smart Switch</span>
+          </button>
+
+          <!-- Daemon Toggle -->
+          <label class="switch-toggle" title="Enable/Disable background quota watcher">
+            <input type="checkbox" id="watcher-toggle" onchange="toggleWatcher(this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Real-time Event Terminal -->
+      <div class="events-feed" id="events-feed">
+        <div class="event-line">Service ready. Standing by.</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Add Account Modal -->
+  <div class="modal-overlay" id="add-modal">
+    <div class="modal">
+      <div class="modal-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
+        </svg>
+        <span>Add Antigravity Account</span>
+      </div>
+
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchModalTab('oauth')" id="tab-oauth">Google Sign-In</button>
+        <button class="tab-btn" onclick="switchModalTab('capture')" id="tab-capture">Active Session</button>
+        <button class="tab-btn" onclick="switchModalTab('token')" id="tab-token">Token / Key</button>
+      </div>
+
+      <!-- Tab 1: Google 1-Click Login (Primary) -->
+      <div id="tab-content-oauth">
+        <div class="google-add-hero">
+          <div style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.5;">
+            Click below to sign into your Google account in your default browser. Promux will automatically link it and capture credentials.
+          </div>
+
+          <div class="form-group" style="width: 100%; text-align: left;">
+            <label class="form-label">Account Name / Label (Optional)</label>
+            <input type="text" class="form-input" id="oauth-alias-input" placeholder="e.g. Work Account, Personal, Dev">
+          </div>
+
+          <button class="btn-google-big" onclick="submitModalOAuthLogin()">
+            <svg width="18" height="18" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3h3.86c2.26-2.09 3.68-5.17 3.68-9.1z"/>
+              <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.26v3.09C3.26 21.36 7.35 24 12 24z"/>
+              <path fill="#FBBC05" d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.13-1.57.38-2.29V6.62H1.26C.46 8.23 0 10.06 0 12s.46 3.77 1.26 5.38l4.01-3.09z"/>
+              <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.26 6.62l4.01 3.09c.95-2.85 3.6-4.96 6.73-4.96z"/>
+            </svg>
+            <span>Sign in with Google</span>
+          </button>
+        </div>
+
+        <div style="display:flex; justify-content: flex-end; gap:8px; margin-top: 10px;">
+          <button class="btn btn-sm" onclick="closeAddModal()">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Tab 2: Capture Live Session -->
+      <div id="tab-content-capture" style="display: none;">
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label class="form-label">Profile Name / Identifier</label>
+          <input type="text" class="form-input" id="profile-name-input" placeholder="e.g. main">
+        </div>
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label class="form-label">Custom Display Label (Optional)</label>
+          <input type="text" class="form-input" id="profile-alias-input" placeholder="e.g. Work Laptop">
+        </div>
+        <div style="font-size: 0.74rem; color: var(--text-muted); margin-bottom: 12px;">
+          Captures credentials currently active in Windows Credential Manager.
+        </div>
+        <div style="display:flex; justify-content: flex-end; gap:8px;">
+          <button class="btn btn-sm" onclick="closeAddModal()">Cancel</button>
+          <button class="btn btn-primary btn-sm" onclick="submitCaptureSession()">Save Profile</button>
+        </div>
+      </div>
+
+      <!-- Tab 3: Paste Raw Token -->
+      <div id="tab-content-token" style="display: none;">
+        <div class="form-group" style="margin-bottom: 8px;">
+          <label class="form-label">Profile Name</label>
+          <input type="text" class="form-input" id="token-profile-name" placeholder="e.g. backup1">
+        </div>
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label class="form-label">Google Token JSON or Refresh Token</label>
+          <textarea class="form-textarea" id="token-payload" rows="3" placeholder='{"token": {"refresh_token": "..."}}'></textarea>
+        </div>
+        <div style="display:flex; justify-content: flex-end; gap:8px;">
+          <button class="btn btn-sm" onclick="closeAddModal()">Cancel</button>
+          <button class="btn btn-primary btn-sm" onclick="submitImportToken()">Import</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Account Name / Alias Modal -->
+  <div class="modal-overlay" id="edit-account-modal">
+    <div class="modal">
+      <div class="modal-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+        </svg>
+        <span>Edit Account Details</span>
+      </div>
+
+      <input type="hidden" id="edit-orig-name">
+
+      <div class="form-group">
+        <label class="form-label">Display Name / Alias (shown in app)</label>
+        <input type="text" class="form-input" id="edit-alias-input" placeholder="e.g. Work Account, Primary Pro">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Internal Profile ID (folder name)</label>
+        <input type="text" class="form-input" id="edit-name-input" placeholder="e.g. work">
+      </div>
+
+      <div style="display:flex; justify-content: flex-end; gap:8px; margin-top: 6px;">
+        <button class="btn btn-sm" onclick="closeEditModal()">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="submitAccountUpdate()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Auto-Failover Quota Exhaustion Confirmation Popup -->
+  <div class="modal-overlay" id="exhaustion-modal">
+    <div class="modal">
+      <div class="modal-title" style="color: var(--amber);">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        <span>Quota Limit Exhausted</span>
+      </div>
+
+      <div class="exhaust-alert-box" id="exhaust-alert-msg">
+        <!-- Message populated dynamically -->
+      </div>
+
+      <label class="header-toggle-wrap" style="align-self: flex-start;">
+        <input type="checkbox" id="exhaust-restart-toggle" checked>
+        <span>Auto-restart Antigravity IDE after switch</span>
+      </label>
+
+      <div style="display:flex; justify-content: flex-end; gap:8px; margin-top: 6px;">
+        <button class="btn btn-sm" onclick="dismissExhaustionAlert()">Dismiss</button>
+        <button class="btn btn-primary btn-sm" id="btn-confirm-failover" onclick="confirmExhaustionFailover()">
+          Switch Account Now
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dedicated OAuth Status Modal -->
+  <div class="modal-overlay" id="oauth-status-modal">
+    <div class="modal" style="text-align: center; align-items: center;">
+      <div id="oauth-card-waiting" style="display:flex; flex-direction:column; align-items:center; gap:10px;">
+        <div class="spin" style="width:32px; height:32px; border:3px solid rgba(255,255,255,0.1); border-top-color:var(--accent); border-radius:50%;"></div>
+        <div style="font-size: 1rem; font-weight: 700;">Waiting for Google Authorization...</div>
+        <div style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.5;">
+          Complete the sign-in screen in your browser. Promux will link the credentials automatically.
+        </div>
+        <a id="oauth-manual-link" href="#" target="_blank" style="color: var(--accent); font-size: 0.74rem; text-decoration: underline;">
+          Click here if browser did not open
+        </a>
+        <button class="btn btn-sm" onclick="cancelOAuthFlow()" style="margin-top: 6px;">Cancel</button>
+      </div>
+
+      <div id="oauth-card-success" style="display:none; flex-direction:column; align-items:center; gap:10px;">
+        <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+        <div style="font-size: 1rem; color: #10b981; font-weight: 700;">Connected Successfully!</div>
+        <div style="font-size: 0.8rem; color: #cbd5e1;" id="oauth-success-text">Account linked.</div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="btn btn-primary btn-sm" onclick="switchOAuthAccountNow()">Switch Now</button>
+          <button class="btn btn-sm" onclick="closeOAuthModal()">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container"></div>
+
+  <script>
+    let state = {
+      active: null,
+      accounts: [],
+      live_session: null,
+      watcher_running: false,
+      prompt_on_exhaustion: false,
+      auto_restart_antigravity: true,
+      pending_alert: null,
+      antigravity_running: false,
+      antigravity_installed: false,
+      events: []
+    };
+
+    let activeOAuthState = null;
+    let oauthPollInterval = null;
+    let latestAddedAccount = null;
+
+    // Load auto-restart setting from localStorage
+    let autoRestartIDE = localStorage.getItem('promux_auto_restart') !== 'false';
+
+    async function apiCall(endpoint, method = 'GET', body = null) {
+      try {
+        const opts = {
+          method,
+          headers: { 'Content-Type': 'application/json' }
+        };
+        if (body) opts.body = JSON.stringify(body);
+        const res = await fetch(endpoint, opts);
+        return await res.json();
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+        return null;
+      }
+    }
+
+    async function loadStatus() {
+      const data = await apiCall('/api/status');
+      if (data) {
+        state = data;
+        render();
+        checkPendingAlert();
+      }
+    }
+
+    function saveAutoRestartSetting(val) {
+      autoRestartIDE = Boolean(val);
+      localStorage.setItem('promux_auto_restart', autoRestartIDE ? 'true' : 'false');
+      apiCall('/api/toggle_setting', 'POST', { auto_restart_antigravity: autoRestartIDE });
+    }
+
+    function render() {
+      const grid = document.getElementById('accounts-grid');
+      const countEl = document.getElementById('account-count');
+      const activeSummaryEl = document.getElementById('active-summary');
+      const watcherToggle = document.getElementById('watcher-toggle');
+      const idePill = document.getElementById('ide-pill');
+      const ideLabel = document.getElementById('ide-label');
+      const autoRestartCheckbox = document.getElementById('auto-restart-toggle');
+
+      countEl.innerText = state.accounts.length;
+      watcherToggle.checked = state.watcher_running;
+      autoRestartCheckbox.checked = autoRestartIDE;
+
+      // Antigravity IDE Status
+      if (state.antigravity_running) {
+        idePill.className = 'ide-pill running';
+        ideLabel.innerText = 'IDE Running';
+      } else {
+        idePill.className = 'ide-pill';
+        ideLabel.innerText = state.antigravity_installed ? 'IDE Idle' : 'IDE Not Found';
+      }
+
+      // Active summary text
+      const activeAcct = state.accounts.find(a => a.is_active);
+      if (activeAcct) {
+        const displayName = activeAcct.alias || activeAcct.name;
+        activeSummaryEl.innerText = `Active: ${displayName} (${activeAcct.email || 'No email'})`;
+      } else {
+        activeSummaryEl.innerText = 'No active profile selected';
+      }
+
+      // Render Events
+      renderEvents();
+
+      // Accounts Grid
+      if (state.accounts.length === 0) {
+        grid.innerHTML = `
+          <div style="grid-column: 1 / -1; padding: 28px; text-align: center; background: var(--surface); border: 1px dashed var(--border); border-radius: 12px; color: var(--text-muted);">
+            <div style="font-size: 0.95rem; font-weight: 600; margin-bottom: 6px; color: var(--text);">No accounts vaulted yet</div>
+            <div style="font-size: 0.8rem; margin-bottom: 14px;">Click the button below to add your Google Antigravity account in 1 click.</div>
+            <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ Add Account</button>
+          </div>
+        `;
+        return;
+      }
+
+      grid.innerHTML = state.accounts.map(acct => {
+        const isActive = acct.is_active;
+        const q = acct.quota;
+        
+        let stateBadgeClass = 'badge-standby';
+        let stateBadgeText = 'STANDBY';
+        if (isActive) {
+          stateBadgeClass = 'badge-active';
+          stateBadgeText = 'ACTIVE';
+        } else if (acct.state === 'cooldown') {
+          stateBadgeClass = 'badge-cooldown';
+          stateBadgeText = 'COOLDOWN';
+        }
+
+        const displayName = acct.alias || acct.name;
+        const hasAlias = Boolean(acct.alias);
+
+        // Quota calculations
+        const gemini5hPct = q && q.gemini_5h_remaining !== undefined ? Math.round(q.gemini_5h_remaining * 100) : 100;
+        const geminiWkPct = q && q.gemini_weekly_remaining !== undefined ? Math.round(q.gemini_weekly_remaining * 100) : 100;
+        const claude5hPct = q && q.third_party_5h_remaining !== undefined ? Math.round(q.third_party_5h_remaining * 100) : 100;
+
+        const getFillClass = (pct) => pct > 50 ? 'fill-high' : (pct > 20 ? 'fill-medium' : 'fill-low');
+
+        return `
+          <div class="card ${isActive ? 'is-active' : ''}">
+            <div class="card-top">
+              <div class="card-identity">
+                <div class="card-title-row">
+                  <span class="card-name" title="${escapeHtml(acct.name)}">${escapeHtml(displayName)}</span>
+                  ${hasAlias ? `<span class="card-alias" title="Profile ID">${escapeHtml(acct.name)}</span>` : ''}
+                  <button class="edit-name-btn" onclick="openEditModal('${escapeHtml(acct.name)}', '${escapeHtml(acct.alias || '')}')" title="Rename or set custom label">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                    </svg>
+                  </button>
+                </div>
+                <div class="card-email" onclick="copyText('${acct.email}')" title="Click to copy email">
+                  <span>${escapeHtml(acct.email || 'No email')}</span>
+                </div>
+              </div>
+              <div class="card-badges">
+                <span class="badge ${stateBadgeClass}">${stateBadgeText}</span>
+              </div>
+            </div>
+
+            <!-- Compact Quotas -->
+            <div class="quotas-container">
+              <!-- Gemini 5h -->
+              <div class="quota-row">
+                <div class="quota-meta">
+                  <span class="quota-label">Gemini (5h)</span>
+                  <div class="quota-stats">
+                    <span class="quota-pct">${gemini5hPct}%</span>
+                    ${q && q.gemini_5h_countdown ? `<span class="quota-countdown">${q.gemini_5h_countdown}</span>` : ''}
+                  </div>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill ${getFillClass(gemini5hPct)}" style="width: ${gemini5hPct}%"></div>
+                </div>
+              </div>
+
+              <!-- Gemini Weekly -->
+              <div class="quota-row">
+                <div class="quota-meta">
+                  <span class="quota-label">Gemini (Weekly)</span>
+                  <div class="quota-stats">
+                    <span class="quota-pct">${geminiWkPct}%</span>
+                    ${q && q.gemini_weekly_countdown ? `<span class="quota-countdown">${q.gemini_weekly_countdown}</span>` : ''}
+                  </div>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill ${getFillClass(geminiWkPct)}" style="width: ${geminiWkPct}%"></div>
+                </div>
+              </div>
+
+              <!-- Claude 5h -->
+              <div class="quota-row">
+                <div class="quota-meta">
+                  <span class="quota-label">Claude/GPT (5h)</span>
+                  <div class="quota-stats">
+                    <span class="quota-pct">${claude5hPct}%</span>
+                    ${q && q.third_party_5h_countdown ? `<span class="quota-countdown">${q.third_party_5h_countdown}</span>` : ''}
+                  </div>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill ${getFillClass(claude5hPct)}" style="width: ${claude5hPct}%"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card Actions -->
+            <div class="card-actions">
+              ${isActive ? `
+                <button class="btn btn-sm btn-primary btn-main" style="opacity: 0.85; cursor: default;">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 6 9 17l-5-5"/>
+                  </svg>
+                  <span>Active</span>
+                </button>
+              ` : `
+                <button class="btn btn-sm btn-primary btn-main" onclick="switchProfile('${acct.name}')">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+                  </svg>
+                  <span>Switch</span>
+                </button>
+              `}
+
+              <button class="btn btn-sm" onclick="checkAccountQuota('${acct.name}')" title="Check live quota">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
+                </svg>
+              </button>
+
+              <button class="btn btn-sm" onclick="refreshToken('${acct.name}')" title="Force renew OAuth token">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="m2 18 10-10 4 4 6-6"/><path d="m18 2 4 4"/>
+                </svg>
+              </button>
+
+              ${acct.state === 'cooldown' ? `
+                <button class="btn btn-sm" onclick="clearCooldown('${acct.name}')" title="Clear Cooldown">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                  </svg>
+                </button>
+              ` : ''}
+
+              <button class="btn btn-sm btn-danger" onclick="deleteProfile('${acct.name}')" title="Delete Profile">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderEvents() {
+      const feed = document.getElementById('events-feed');
+      if (!state.events || state.events.length === 0) return;
+      feed.innerHTML = state.events.map(ev => `
+        <div class="event-line ${ev.level}">
+          <span>[${ev.time}]</span>
+          <span>${escapeHtml(ev.message)}</span>
+        </div>
+      `).join('');
+      feed.scrollTop = feed.scrollHeight;
+    }
+
+    // =================================================================
+    // Auto-Failover Quota Exhaustion Alert Modal
+    // =================================================================
+    function checkPendingAlert() {
+      const alert = state.pending_alert;
+      const modal = document.getElementById('exhaustion-modal');
+      if (alert && alert.exhausted_account) {
+        const msgEl = document.getElementById('exhaust-alert-msg');
+        const target = alert.recommended_alias || alert.recommended_account || 'standby account';
+        msgEl.innerHTML = `
+          <div>Active account <strong>${escapeHtml(alert.exhausted_account)}</strong> reached its quota limit (429 RESOURCE_EXHAUSTED).</div>
+          <div style="margin-top:4px;">Recommended next profile: <strong style="color:var(--accent);">${escapeHtml(target)}</strong>.</div>
+        `;
+        document.getElementById('btn-confirm-failover').innerText = `Switch to '${target}' Now`;
+        modal.style.display = 'flex';
+      } else {
+        modal.style.display = 'none';
+      }
+    }
+
+    async function confirmExhaustionFailover() {
+      const restartIDE = document.getElementById('exhaust-restart-toggle').checked;
+      const res = await apiCall('/api/alert/confirm', 'POST', { restart_ide: restartIDE });
+      document.getElementById('exhaustion-modal').style.display = 'none';
+      if (res && res.success) {
+        showToast(res.message || 'Switched account successfully!', 'success');
+        await loadStatus();
+      } else {
+        showToast(res ? res.error : 'Failover failed', 'error');
+      }
+    }
+
+    async function dismissExhaustionAlert() {
+      document.getElementById('exhaustion-modal').style.display = 'none';
+      await apiCall('/api/alert/dismiss', 'POST');
+    }
+
+    // =================================================================
+    // Restart Antigravity IDE
+    // =================================================================
+    async function restartAntigravity() {
+      showToast('Restarting Google Antigravity IDE...');
+      const res = await apiCall('/api/restart_antigravity', 'POST');
+      if (res && res.success) {
+        showToast('Antigravity IDE successfully restarted!', 'success');
+        await loadStatus();
+      } else {
+        showToast(res ? res.error : 'Failed to restart IDE', 'error');
+      }
+    }
+
+    // =================================================================
+    // Edit Account Name / Alias Modal
+    // =================================================================
+    function openEditModal(name, alias) {
+      document.getElementById('edit-orig-name').value = name;
+      document.getElementById('edit-name-input').value = name;
+      document.getElementById('edit-alias-input').value = alias || '';
+      document.getElementById('edit-account-modal').style.display = 'flex';
+    }
+
+    function closeEditModal() {
+      document.getElementById('edit-account-modal').style.display = 'none';
+    }
+
+    async function submitAccountUpdate() {
+      const origName = document.getElementById('edit-orig-name').value;
+      const newName = document.getElementById('edit-name-input').value.trim();
+      const alias = document.getElementById('edit-alias-input').value.trim();
+
+      if (!newName) {
+        showToast('Profile ID cannot be empty', 'error');
+        return;
+      }
+
+      const res = await apiCall('/api/account/update', 'POST', {
+        name: origName,
+        new_name: newName,
+        alias: alias || null,
+      });
+
+      if (res && res.success) {
+        showToast(`Account updated successfully!`, 'success');
+        closeEditModal();
+        await loadStatus();
+      } else {
+        showToast(res ? res.error : 'Failed to update account', 'error');
+      }
+    }
+
+    // =================================================================
+    // Switching Profiles & Smart Switch
+    // =================================================================
+    async function switchProfile(name) {
+      // Optimistic instant UI update for zero lag
+      if (state && state.accounts) {
+        state.active = name;
+        state.accounts.forEach(a => a.is_active = (a.name === name));
+        render();
+      }
+      showToast(`Switched to '${name}'`, 'info');
+      const res = await apiCall('/api/switch', 'POST', { name, restart_ide: autoRestartIDE });
+      if (res && res.success) {
+        showToast(res.message || `Switched to '${name}'`, 'success');
+        await loadStatus();
+      } else {
+        showToast(res ? res.error : 'Switch failed', 'error');
+        await loadStatus();
+      }
+    }
+
+    async function triggerSmartSwitch() {
+      showToast('Evaluating account quotas...', 'info');
+      const res = await apiCall('/api/smart_switch', 'POST', { restart_ide: autoRestartIDE });
+      if (res && res.success) {
+        if (state && state.accounts && res.target) {
+          state.active = res.target;
+          state.accounts.forEach(a => a.is_active = (a.name === res.target));
+          render();
+        }
+        showToast(res.message || `Smart Switch rotated to: ${res.target}`, 'success');
+        await loadStatus();
+      } else {
+        showToast(res ? res.error : 'Smart Switch failed', 'error');
+      }
+    }
+
+    // =================================================================
+    // 1-Click Google OAuth Sign-in
+    // =================================================================
+    async function startGoogleLogin(alias = '') {
+      showToast('Opening Google Sign-in in your default browser...');
+      const res = await apiCall('/api/oauth/start', 'POST', { alias });
+      if (!res || !res.success) {
+        showToast('Failed to start Google sign-in: ' + (res ? res.error : 'Unknown error'), 'error');
+        return;
+      }
+
+      activeOAuthState = res.state;
+      latestAddedAccount = null;
+
+      const modal = document.getElementById('oauth-status-modal');
+      document.getElementById('oauth-card-waiting').style.display = 'flex';
+      document.getElementById('oauth-card-success').style.display = 'none';
+      document.getElementById('oauth-manual-link').href = res.auth_url;
+      modal.style.display = 'flex';
+
+      if (oauthPollInterval) clearInterval(oauthPollInterval);
+      oauthPollInterval = setInterval(checkOAuthStatus, 1200);
+    }
+
+    async function checkOAuthStatus() {
+      if (!activeOAuthState) return;
+      const res = await apiCall(`/api/oauth/check?state=${encodeURIComponent(activeOAuthState)}`);
+      if (!res) return;
+
+      if (res.status === 'success') {
+        clearInterval(oauthPollInterval);
+        oauthPollInterval = null;
+        latestAddedAccount = res.account;
+
+        document.getElementById('oauth-card-waiting').style.display = 'none';
+        document.getElementById('oauth-card-success').style.display = 'flex';
+        document.getElementById('oauth-success-text').innerHTML = `
+          Account <strong>${escapeHtml(res.email || res.account)}</strong> was linked successfully.
+        `;
+
+        showToast(`Connected ${res.email || res.account}!`, 'success');
+        await loadStatus();
+        await autoRefreshQuotas(true);
+      } else if (res.status === 'error') {
+        clearInterval(oauthPollInterval);
+        oauthPollInterval = null;
+        showToast('Google sign-in error: ' + res.error, 'error');
+        closeOAuthModal();
+      }
+    }
+
+    function cancelOAuthFlow() {
+      if (oauthPollInterval) clearInterval(oauthPollInterval);
+      oauthPollInterval = null;
+      activeOAuthState = null;
+      closeOAuthModal();
+    }
+
+    function closeOAuthModal() {
+      if (oauthPollInterval) clearInterval(oauthPollInterval);
+      oauthPollInterval = null;
+      document.getElementById('oauth-status-modal').style.display = 'none';
+    }
+
+    async function switchOAuthAccountNow() {
+      if (latestAddedAccount) {
+        await switchProfile(latestAddedAccount);
+      }
+      closeOAuthModal();
+    }
+
+    function submitModalOAuthLogin() {
+      const alias = document.getElementById('oauth-alias-input').value.trim();
+      closeAddModal();
+      startGoogleLogin(alias);
+    }
+
+    // =================================================================
+    // Quota Refresh & Management
+    // =================================================================
+    async function autoRefreshQuotas(silent = false) {
+      const pill = document.getElementById('sync-pill');
+      const label = document.getElementById('sync-label');
+      const icon = document.getElementById('refresh-icon');
+
+      pill.classList.add('syncing');
+      label.innerText = 'Syncing...';
+      if (icon) icon.classList.add('spin');
+
+      try {
+        await apiCall('/api/refresh_quota', 'POST', { name: 'all' });
+        await loadStatus();
+        pill.classList.remove('syncing');
+        label.innerText = 'Synced';
+      } catch (e) {
+        pill.classList.remove('syncing');
+        label.innerText = 'Synced';
+      } finally {
+        if (icon) icon.classList.remove('spin');
+      }
+
+      if (!silent) {
+        showToast('Quotas refreshed successfully', 'success');
+      }
+    }
+
+    async function refreshAllQuotas() {
+      await autoRefreshQuotas(false);
+    }
+
+    async function checkAccountQuota(name) {
+      showToast(`Querying quota for ${name}...`);
+      await apiCall('/api/refresh_quota', 'POST', { name });
+      await loadStatus();
+      showToast(`Quota updated for ${name}`, 'success');
+    }
+
+    async function refreshToken(name) {
+      showToast(`Renewing token for ${name}...`);
+      const res = await apiCall('/api/refresh_token', 'POST', { name });
+      if (res && res.success) {
+        showToast(`Token renewed: ${res.message}`, 'success');
+        await loadStatus();
+      } else {
+        showToast(res ? res.error : 'Renewal failed', 'error');
+      }
+    }
+
+    async function clearCooldown(name) {
+      await apiCall('/api/clear_cooldown', 'POST', { name });
+      showToast(`Cooldown cleared for ${name}`, 'success');
+      await loadStatus();
+    }
+
+    async function deleteProfile(name) {
+      if (!confirm(`Are you sure you want to delete profile '${name}'?`)) return;
+      const res = await apiCall('/api/delete', 'POST', { name });
+      if (res && res.success) {
+        showToast(`Profile '${name}' deleted`, 'success');
+        await loadStatus();
+      }
+    }
+
+    async function toggleWatcher(enabled) {
+      await apiCall('/api/toggle_watcher', 'POST', { enabled });
+      showToast(enabled ? 'Auto-Failover enabled' : 'Auto-Failover disabled', 'success');
+      await loadStatus();
+    }
+
+    // Modal Control
+    function openAddModal() {
+      document.getElementById('add-modal').style.display = 'flex';
+      switchModalTab('oauth');
+    }
+
+    function closeAddModal() {
+      document.getElementById('add-modal').style.display = 'none';
+    }
+
+    function switchModalTab(tab) {
+      document.getElementById('tab-oauth').classList.toggle('active', tab === 'oauth');
+      document.getElementById('tab-capture').classList.toggle('active', tab === 'capture');
+      document.getElementById('tab-token').classList.toggle('active', tab === 'token');
+
+      document.getElementById('tab-content-oauth').style.display = tab === 'oauth' ? 'block' : 'none';
+      document.getElementById('tab-content-capture').style.display = tab === 'capture' ? 'block' : 'none';
+      document.getElementById('tab-content-token').style.display = tab === 'token' ? 'block' : 'none';
+    }
+
+    async function submitCaptureSession() {
+      const name = document.getElementById('profile-name-input').value.trim();
+      const alias = document.getElementById('profile-alias-input').value.trim();
+      if (!name) {
+        showToast('Please enter a profile name', 'error');
+        return;
+      }
+      const res = await apiCall('/api/save', 'POST', { name, alias });
+      if (res && res.success) {
+        showToast(`Profile '${name}' saved!`, 'success');
+        closeAddModal();
+        await loadStatus();
+        await autoRefreshQuotas(true);
+      } else {
+        showToast(res ? res.error : 'Failed to save', 'error');
+      }
+    }
+
+    async function submitImportToken() {
+      const name = document.getElementById('token-profile-name').value.trim();
+      const raw = document.getElementById('token-payload').value.trim();
+      if (!name || !raw) {
+        showToast('Both name and token payload are required', 'error');
+        return;
+      }
+      const res = await apiCall('/api/import_token', 'POST', { name, token_raw: raw });
+      if (res && res.success) {
+        showToast(`Profile '${name}' imported!`, 'success');
+        closeAddModal();
+        await loadStatus();
+        await autoRefreshQuotas(true);
+      } else {
+        showToast(res ? res.error : 'Import failed', 'error');
+      }
+    }
+
+    function copyText(text) {
+      if (!text) return;
+      navigator.clipboard.writeText(text);
+      showToast('Email copied to clipboard!', 'success');
+    }
+
+    function showToast(msg, type = 'info') {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.innerText = msg;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(8px)';
+        setTimeout(() => toast.remove(), 250);
+      }, 3200);
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      await loadStatus();
+      await autoRefreshQuotas(true);
+      window.addEventListener('focus', () => {
+        autoRefreshQuotas(true);
+      });
+      setInterval(() => {
+        autoRefreshQuotas(true);
+      }, 35000);
+    });
+  </script>
+</body>
+</html>
