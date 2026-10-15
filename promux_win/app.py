@@ -16,15 +16,22 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.request
 import webbrowser
 from pathlib import Path
 
 # Safeguard stdout/stderr for PyInstaller windowed mode
-if sys.stdout is None:
-    sys.stdout = io.StringIO()
-if sys.stderr is None:
-    sys.stderr = io.StringIO()
+if sys.stdout is None or getattr(sys.stdout, "closed", False):
+    try:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    except Exception:
+        pass
+if sys.stderr is None or getattr(sys.stderr, "closed", False):
+    try:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    except Exception:
+        pass
 
 from .server import create_server
 
@@ -53,6 +60,17 @@ def find_free_port(preferred: int = DEFAULT_PORT) -> int:
             return s.getsockname()[1]
 
 
+def _log(msg: str) -> None:
+    try:
+        log_dir = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Promux"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "promux.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(f"[{os.getpid()}] {msg}\n")
+    except Exception:
+        pass
+
+
 def launch_native_app_window(url: str, prefer_edge: bool = False) -> bool:
     """Launch native borderless application window using Chrome or Edge, or fallback to browser."""
     try:
@@ -75,6 +93,7 @@ def launch_native_app_window(url: str, prefer_edge: bool = False) -> bool:
     ]
 
     candidates = (edge_candidates + chrome_candidates) if prefer_edge else (chrome_candidates + edge_candidates)
+    _log(f"launch_native_app_window: url={url}, prefer_edge={prefer_edge}")
 
     for exe in candidates:
         if exe and os.path.exists(exe):
@@ -85,34 +104,47 @@ def launch_native_app_window(url: str, prefer_edge: bool = False) -> bool:
                 "--no-first-run",
                 "--no-default-browser-check",
             ]
+            _log(f"launch_native_app_window: launching {exe}")
             try:
-                proc = subprocess.Popen(cmd)
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
                 time.sleep(0.3)
                 poll = proc.poll()
+                _log(f"launch_native_app_window: proc.poll()={poll}")
                 if poll is not None and poll != 0:
                     continue
                 return True
-            except Exception:
+            except Exception as e:
+                _log(f"launch_native_app_window: exception {e}")
                 continue
 
     # Fallback to default browser
+    _log("launch_native_app_window: falling back to webbrowser.open")
     try:
         webbrowser.open(url)
         return True
-    except Exception:
+    except Exception as e:
+        _log(f"launch_native_app_window: webbrowser error {e}")
         return False
 
 
 def main(argv: list[str] | None = None) -> int:
+    _log(f"app.py: main() entered with argv={argv}")
     parser = argparse.ArgumentParser(description="Promux Windows — Antigravity Account Multiplexer")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Server port (default: 18420)")
     parser.add_argument("--browser", action="store_true", help="Launch in default browser tab")
     parser.add_argument("--edge", action="store_true", help="Prefer Microsoft Edge")
     parser.add_argument("--no-window", action="store_true", help="Run background server only without opening UI")
     args = parser.parse_args(argv)
+    _log(f"app.py: args={args}")
 
     # 1. Single Instance Check: If server already active, just bring up / launch window!
     if is_server_alive(args.port):
+        _log(f"app.py: server is alive on port {args.port}")
         url = f"http://127.0.0.1:{args.port}"
         if not args.no_window:
             if args.browser:
@@ -122,10 +154,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # 2. Bind and Start Background HTTP Server
+    _log(f"app.py: binding server on {args.port}")
     port = find_free_port(args.port)
     server = create_server("127.0.0.1", port)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
+    _log(f"app.py: server thread started on port {port}")
 
     url = f"http://127.0.0.1:{port}"
 
@@ -139,18 +173,35 @@ def main(argv: list[str] | None = None) -> int:
 
     # 3. Launch UI Window if requested
     if not args.no_window:
+        _log(f"app.py: launching UI window...")
         if args.browser:
             webbrowser.open(url)
         else:
             launch_native_app_window(url, prefer_edge=args.edge)
 
+    def _threading_excepthook(args):
+        _log(f"app.py: UNCAUGHT THREAD EXCEPTION in {args.thread}: {args.exc_type} {args.exc_value}\n{''.join(traceback.format_tb(args.exc_traceback))}")
+    threading.excepthook = _threading_excepthook
+
+    def _sys_excepthook(exctype, value, tb):
+        _log(f"app.py: UNCAUGHT MAIN EXCEPTION: {exctype} {value}\n{''.join(traceback.format_tb(tb))}")
+    sys.excepthook = _sys_excepthook
+
     # 4. Keep background server and auto-failover daemon alive
+    _log("app.py: entering keep-alive loop")
     try:
+        seconds = 0
         while True:
             time.sleep(1)
-    except (KeyboardInterrupt, SystemExit):
-        pass
+            seconds += 1
+            if seconds % 2 == 0:
+                _log(f"app.py: heartbeat alive ({seconds}s)")
+    except (KeyboardInterrupt, SystemExit) as ke:
+        _log(f"app.py: keep-alive loop interrupted by {ke}")
+    except Exception as e:
+        _log(f"app.py: keep-alive loop crashed: {e}")
     finally:
+        _log("app.py: shutting down server")
         server.shutdown()
 
     return 0

@@ -55,6 +55,17 @@ def _get_ui_dir() -> Path:
 UI_DIR = _get_ui_dir()
 
 
+def _log(msg: str) -> None:
+    try:
+        log_dir = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Promux"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "promux.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(f"[{os.getpid()}] {msg}\n")
+    except Exception:
+        pass
+
+
 class PromuxApiHandler(BaseHTTPRequestHandler):
     storage: WindowsStorageEngine
     watcher: AntigravityLogWatcher
@@ -88,6 +99,7 @@ class PromuxApiHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+        _log(f"server: GET {path}")
 
         if path == "/api/status":
             self._handle_get_status(parsed)
@@ -106,6 +118,7 @@ class PromuxApiHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+        _log(f"server: POST {path}")
         body = self._read_json_body()
 
         if path == "/api/save":
