@@ -134,6 +134,11 @@ def test_antigravity_manager():
     # Should run without throwing errors
     is_run = AntigravityManager.is_running()
     assert isinstance(is_run, bool)
+    pids = AntigravityManager.get_antigravity_pids()
+    assert isinstance(pids, list)
+    for pid in pids:
+        assert isinstance(pid, int)
+        assert pid > 0
     exe = AntigravityManager.find_antigravity_executable()
     if exe is not None:
         assert exe.exists()

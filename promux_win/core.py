@@ -246,12 +246,43 @@ def extract_email_from_jwt(id_token: str | None) -> str | None:
 # Antigravity Process & Lifecycle Manager
 # =====================================================================
 
+def _log(msg: str) -> None:
+    try:
+        log_dir = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Promux"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "promux.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(f"[{os.getpid()}] {msg}\n")
+    except Exception:
+        pass
+
+
 class AntigravityManager:
     """Manages Google Antigravity IDE process lifecycle on Windows with high-performance native APIs."""
 
-    @staticmethod
-    def find_antigravity_executable() -> Path | None:
+    @classmethod
+    def find_antigravity_executable(cls) -> Path | None:
         """Locates the primary Antigravity IDE executable on the system."""
+        # 1. Query path from currently running process if available
+        try:
+            pids = cls.get_antigravity_pids()
+            if pids:
+                kernel32 = ctypes.windll.kernel32
+                PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+                hProc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pids[0])
+                if hProc:
+                    buf = ctypes.create_unicode_buffer(1024)
+                    size = wintypes.DWORD(1024)
+                    if kernel32.QueryFullProcessImageNameW(hProc, 0, buf, ctypes.byref(size)):
+                        p = Path(buf.value)
+                        kernel32.CloseHandle(hProc)
+                        if p.exists() and p.is_file():
+                            return p
+                    kernel32.CloseHandle(hProc)
+        except Exception:
+            pass
+
+        # 2. Well-known filesystem locations
         candidates = [
             Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "antigravity" / "Antigravity.exe",
             Path(os.environ.get("PROGRAMFILES", "")) / "antigravity" / "Antigravity.exe",
@@ -267,8 +298,7 @@ class AntigravityManager:
         """Ultra-fast process enumeration using Windows Toolhelp32 API (~5ms)."""
         pids: list[int] = []
         try:
-            import ctypes
-            from ctypes import wintypes
+            kernel32 = ctypes.windll.kernel32
 
             class PROCESSENTRY32(ctypes.Structure):
                 _fields_ = [
@@ -284,7 +314,6 @@ class AntigravityManager:
                     ('szExeFile', ctypes.c_char * 260)
                 ]
 
-            kernel32 = ctypes.windll.kernel32
             hSnapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
             if hSnapshot and hSnapshot != -1:
                 pe = PROCESSENTRY32()
@@ -328,68 +357,147 @@ class AntigravityManager:
         return len(cls.get_antigravity_pids()) > 0
 
     @classmethod
-    def terminate(cls) -> bool:
-        """Immediately terminates all running Antigravity.exe processes."""
+    def terminate(cls, timeout: float = 4.0) -> bool:
+        """Immediately terminates all running Antigravity.exe processes and waits until all exit."""
         pids = cls.get_antigravity_pids()
         if not pids:
             return True
 
-        success = False
-        try:
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            PROCESS_TERMINATE = 0x0001
-            for pid in pids:
+        _log(f"AntigravityManager.terminate: terminating {len(pids)} PIDs: {pids}")
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_TERMINATE = 0x0001
+        for pid in pids:
+            try:
                 hProc = kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
                 if hProc:
                     kernel32.TerminateProcess(hProc, 0)
                     kernel32.CloseHandle(hProc)
-                    success = True
-        except Exception:
-            pass
+            except Exception as e:
+                _log(f"AntigravityManager.terminate: TerminateProcess error on pid {pid}: {e}")
 
-        # Fallback taskkill
+        # Poll until no Antigravity PIDs remain
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            if not cls.is_running():
+                _log(f"AntigravityManager.terminate: all PIDs terminated cleanly in {time.monotonic() - start:.2f}s")
+                return True
+            time.sleep(0.08)
+
+        # Fallback taskkill if any stubborn processes remain
+        _log("AntigravityManager.terminate: some processes still active, running taskkill fallback")
         try:
             subprocess.run(
                 ["taskkill", "/F", "/IM", "Antigravity.exe", "/T"],
                 stdin=subprocess.DEVNULL,
-                capture_output=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 timeout=3,
             )
-            success = True
-        except Exception:
-            pass
+        except Exception as e:
+            _log(f"AntigravityManager.terminate: taskkill error: {e}")
 
-        return success
+        # Wait another moment for taskkill to finish
+        end_wait = time.monotonic() + 1.5
+        while time.monotonic() < end_wait:
+            if not cls.is_running():
+                _log("AntigravityManager.terminate: all PIDs terminated after taskkill")
+                return True
+            time.sleep(0.08)
+
+        still = cls.get_antigravity_pids()
+        _log(f"AntigravityManager.terminate: finished with remaining PIDs: {still}")
+        return len(still) == 0
 
     @classmethod
     def restart(cls, force_launch: bool = True, async_mode: bool = True) -> tuple[bool, str]:
-        """Gracefully closes Antigravity IDE if running, then relaunches it asynchronously or synchronously."""
+        """Gracefully closes Antigravity IDE if running, then relaunches it reliably."""
         was_running = cls.is_running()
         exe_path = cls.find_antigravity_executable()
 
         if not exe_path and not was_running:
+            _log("AntigravityManager.restart: executable not found and was not running")
             return False, "Antigravity IDE executable was not found on this system."
 
         def _do_restart():
+            _log(f"AntigravityManager._do_restart started: was_running={was_running}, force_launch={force_launch}, exe={exe_path}")
             if was_running:
-                cls.terminate()
-                time.sleep(0.3)
+                cls.terminate(timeout=5.0)
+
+                # Ensure lockfile in AppData/Antigravity is completely freed
+                appdata = os.environ.get("APPDATA")
+                lock_file = Path(appdata) / "Antigravity" / "lockfile" if appdata else None
+                if lock_file:
+                    _log(f"AntigravityManager._do_restart: waiting for lockfile release: {lock_file}")
+                    for i in range(30):
+                        try:
+                            if lock_file.exists():
+                                lock_file.unlink()
+                            _log(f"AntigravityManager._do_restart: lockfile freed/removed at iteration {i}")
+                            break
+                        except (PermissionError, OSError):
+                            time.sleep(0.08)
+
+                # Settle delay so Windows kernel completely cleans up network sockets and IPC handles
+                time.sleep(0.5)
 
             if (was_running or force_launch) and exe_path and exe_path.exists():
+                exe_str = str(exe_path)
+                exe_dir = str(exe_path.parent)
+                _log(f"AntigravityManager._do_restart: relaunching {exe_str} with cwd={exe_dir}")
+
+                started = False
+                # Primary launch via ShellExecuteW with explicit working directory
                 try:
-                    os.startfile(str(exe_path))
-                except Exception:
+                    res = ctypes.windll.shell32.ShellExecuteW(None, "open", exe_str, None, exe_dir, 1)
+                    _log(f"AntigravityManager._do_restart: ShellExecuteW returned {res}")
+                    if res > 32:
+                        started = True
+                except Exception as e:
+                    _log(f"AntigravityManager._do_restart: ShellExecuteW exception: {e}")
+
+                # Secondary launch via subprocess.Popen with detached flags if ShellExecuteW failed
+                if not started:
                     try:
-                        subprocess.Popen(
-                            [str(exe_path)],
+                        DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+                        CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+                        proc = subprocess.Popen(
+                            [exe_str],
+                            cwd=exe_dir,
                             stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
-                            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200),
+                            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
                             close_fds=True,
                         )
+                        _log(f"AntigravityManager._do_restart: subprocess.Popen launched PID {proc.pid}")
+                        started = True
+                    except Exception as e:
+                        _log(f"AntigravityManager._do_restart: subprocess.Popen exception: {e}")
+
+                # Fallback to os.startfile
+                if not started:
+                    try:
+                        os.startfile(exe_str)
+                        _log("AntigravityManager._do_restart: os.startfile called")
+                        started = True
+                    except Exception as e:
+                        _log(f"AntigravityManager._do_restart: os.startfile exception: {e}")
+
+                # Verification: verify that Antigravity is running within 5 seconds
+                relaunch_ok = False
+                for _ in range(25):
+                    time.sleep(0.2)
+                    if cls.is_running():
+                        relaunch_ok = True
+                        break
+
+                if relaunch_ok:
+                    _log("AntigravityManager._do_restart: Antigravity relaunch verified successfully running!")
+                else:
+                    _log("AntigravityManager._do_restart: Antigravity not detected running after 5s; attempting secondary startfile trigger")
+                    try:
+                        os.startfile(exe_str)
                     except Exception:
                         pass
 

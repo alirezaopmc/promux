@@ -291,7 +291,7 @@ class PromuxApiHandler(BaseHTTPRequestHandler):
                 "email": live_email,
             },
             "watcher_running": self.watcher.running,
-            "prompt_on_exhaustion": getattr(self.watcher, "prompt_on_exhaustion", True),
+            "prompt_on_exhaustion": getattr(self.watcher, "prompt_on_exhaustion", False),
             "auto_restart_antigravity": getattr(self.watcher, "auto_restart_antigravity", True),
             "pending_alert": pending_alert,
             "antigravity_running": antigravity_running,
