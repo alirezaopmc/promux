@@ -1,24 +1,100 @@
+from __future__ import annotations
+
 import json
 import os
 import re
 from pathlib import Path
+from typing import Any
 
-# Paths
-PROMUX_HOME = Path(os.environ.get("PROMUX_HOME", Path.home() / ".promux"))
-ACCOUNTS_DIR = PROMUX_HOME / "accounts"
-STATE_FILE = PROMUX_HOME / "state.json"
-LOCK_FILE = PROMUX_HOME / "manager.lock"
-CONFIG_FILE = PROMUX_HOME / "config.json"
-CACHE_DIR = PROMUX_HOME / "cache"
-QUOTA_CACHE_FILE = CACHE_DIR / "quota.json"
+# Type annotations for lazily evaluated module attributes (PEP 562)
+PROMUX_HOME: Path
+ACCOUNTS_DIR: Path
+STATE_FILE: Path
+LOCK_FILE: Path
+CONFIG_FILE: Path
+CACHE_DIR: Path
+QUOTA_CACHE_FILE: Path
+GEMINI_CLI_HOME: Path
+LIVE_TOKEN: Path
+CLI_LOG: Path
+LOG_DIR: Path
+DEFAULT_HTTP_TIMEOUT: float
 
-# Gemini / Antigravity CLI Paths
-GEMINI_CLI_HOME = Path(
-    os.environ.get("PROMUX_GEMINI_HOME", Path.home() / ".gemini" / "antigravity-cli")
-)
-LIVE_TOKEN = GEMINI_CLI_HOME / "antigravity-oauth-token"
-CLI_LOG = GEMINI_CLI_HOME / "cli.log"
-LOG_DIR = GEMINI_CLI_HOME / "log"
+_LAZY_PATH_NAMES: frozenset[str] = frozenset({
+    "PROMUX_HOME",
+    "ACCOUNTS_DIR",
+    "STATE_FILE",
+    "LOCK_FILE",
+    "CONFIG_FILE",
+    "CACHE_DIR",
+    "QUOTA_CACHE_FILE",
+    "GEMINI_CLI_HOME",
+    "LIVE_TOKEN",
+    "CLI_LOG",
+    "LOG_DIR",
+})
+_ALL_LAZY_NAMES: frozenset[str] = _LAZY_PATH_NAMES | frozenset({"DEFAULT_HTTP_TIMEOUT"})
+
+# Clean up any cached lazy attributes on module reload
+for _name in _ALL_LAZY_NAMES:
+    globals().pop(_name, None)
+
+_LAZY_PATHS: dict[str, Path] = {}
+
+
+def _build_lazy_paths() -> dict[str, Path]:
+    if "PROMUX_HOME" in globals() and isinstance(globals()["PROMUX_HOME"], Path):
+        home = globals()["PROMUX_HOME"]
+    else:
+        home = Path(os.environ.get("PROMUX_HOME", Path.home() / ".promux"))
+
+    if "GEMINI_CLI_HOME" in globals() and isinstance(globals()["GEMINI_CLI_HOME"], Path):
+        gemini_home = globals()["GEMINI_CLI_HOME"]
+    else:
+        gemini_home = Path(
+            os.environ.get("PROMUX_GEMINI_HOME", Path.home() / ".gemini" / "antigravity-cli")
+        )
+
+    cache_dir = home / "cache"
+    return {
+        "PROMUX_HOME": home,
+        "ACCOUNTS_DIR": home / "accounts",
+        "STATE_FILE": home / "state.json",
+        "LOCK_FILE": home / "manager.lock",
+        "CONFIG_FILE": home / "config.json",
+        "CACHE_DIR": cache_dir,
+        "QUOTA_CACHE_FILE": cache_dir / "quota.json",
+        "GEMINI_CLI_HOME": gemini_home,
+        "LIVE_TOKEN": gemini_home / "antigravity-oauth-token",
+        "CLI_LOG": gemini_home / "cli.log",
+        "LOG_DIR": gemini_home / "log",
+    }
+
+
+def _get_lazy_path(name: str) -> Path:
+    val = globals().get(name)
+    if isinstance(val, Path):
+        return val
+    if not _LAZY_PATHS:
+        _LAZY_PATHS.update(_build_lazy_paths())
+        for k, v in _LAZY_PATHS.items():
+            globals().setdefault(k, v)
+    return _LAZY_PATHS[name]
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_PATH_NAMES:
+        return _get_lazy_path(name)
+    if name == "DEFAULT_HTTP_TIMEOUT":
+        timeout = get_default_http_timeout()
+        globals()[name] = timeout
+        return timeout
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(list(globals().keys()) + list(_ALL_LAZY_NAMES))
+
 
 # API Endpoints
 CODE_ASSIST_BASE_URL = os.environ.get(
@@ -44,7 +120,7 @@ def detect_code_assist_url(gemini_home: Path | None = None) -> str:
     env_url = os.environ.get("PROMUX_CODE_ASSIST_URL")
     if env_url:
         return env_url
-    gh = gemini_home or GEMINI_CLI_HOME
+    gh = gemini_home or _get_lazy_path("GEMINI_CLI_HOME")
     cli_log = gh / "cli.log"
     if cli_log.exists():
         try:
@@ -84,7 +160,7 @@ def get_default_http_timeout(config_file: Path | None = None) -> float:
         except ValueError:
             pass
 
-    cfg = config_file or CONFIG_FILE
+    cfg = config_file or _get_lazy_path("CONFIG_FILE")
     if cfg.exists():
         try:
             with open(cfg, encoding="utf-8") as f:
@@ -99,5 +175,42 @@ def get_default_http_timeout(config_file: Path | None = None) -> float:
     return 5.0
 
 
-DEFAULT_HTTP_TIMEOUT = get_default_http_timeout()
 DEFAULT_QUOTA_CACHE_TTL_SECONDS = 300
+
+__all__ = [
+    "ACCOUNTS_DIR",
+    "CACHE_DIR",
+    "CLI_LOG",
+    "CODE_ASSIST_BASE_URL",
+    "CONFIG_FILE",
+    "DEFAULT_COOLDOWN_MINUTES",
+    "DEFAULT_HTTP_TIMEOUT",
+    "DEFAULT_LOCK_TIMEOUT",
+    "DEFAULT_OAUTH_CLIENT_ID",
+    "DEFAULT_OAUTH_CLIENT_SECRET",
+    "DEFAULT_POLL_SECONDS",
+    "DEFAULT_PROACTIVE_REFRESH_INTERVAL_SECONDS",
+    "DEFAULT_QUOTA_CACHE_TTL_SECONDS",
+    "DEFAULT_TOKEN_EXPIRY_BUFFER_SECONDS",
+    "FALLBACK_CODE_ASSIST_BASE_URL",
+    "GEMINI_CLI_HOME",
+    "INDIVIDUAL_QUOTA_RE",
+    "LIVE_TOKEN",
+    "LOAD_ENDPOINT",
+    "LOCK_FILE",
+    "LOG_DIR",
+    "OAUTH_CLIENT_ID",
+    "OAUTH_CLIENT_SECRET",
+    "OAUTH_TOKEN_URL",
+    "PROMUX_HOME",
+    "QUOTA_CACHE_FILE",
+    "QUOTA_ENDPOINT",
+    "RESET_HINT_RE",
+    "RESOURCE_EXHAUSTED_RE",
+    "STATE_FILE",
+    "USER_AGENT",
+    "USERINFO_URL",
+    "WEEKLY_QUOTA_RE",
+    "detect_code_assist_url",
+    "get_default_http_timeout",
+]
