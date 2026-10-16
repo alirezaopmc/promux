@@ -13,10 +13,10 @@ from .colors import bold, cyan, dim, is_color_enabled
 def get_version() -> str:
     """Return the installed package version, resolved lazily."""
     try:
-        from . import _version  # type: ignore[attr-defined]
+        from ._version import __version__
 
-        return str(_version.__version__)
-    except (ImportError, AttributeError):
+        return str(__version__)
+    except ImportError:
         pass
     try:
         from importlib.metadata import version
