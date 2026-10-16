@@ -13,17 +13,20 @@ from .colors import bold, cyan, dim, is_color_enabled
 def get_version() -> str:
     """Return the installed package version, resolved lazily."""
     try:
-        from ._version import __version__
+        from . import _version  # type: ignore[attr-defined]
 
-        return __version__
-    except ImportError:
+        return str(_version.__version__)
+    except (ImportError, AttributeError):
         pass
     try:
         from importlib.metadata import version
 
-        return version("promux")
+        v = version("promux")
+        if v and v != "0.0.0":
+            return str(v)
     except Exception:
-        return "0.4.0"
+        pass
+    return "1.0.0"
 
 
 def get_version_info() -> dict[str, Any]:

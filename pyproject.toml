@@ -88,6 +88,10 @@ no_implicit_optional = true
 module = "tests.*"
 disallow_untyped_defs = false
 
+[[tool.mypy.overrides]]
+module = "promux._version"
+ignore_missing_imports = true
+
 [tool.coverage.run]
 source = ["promux"]
 omit = ["tests/*"]

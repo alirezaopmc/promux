@@ -4,7 +4,10 @@ import logging
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
-try:
-    from ._version import __version__
-except ImportError:
-    __version__ = "0.4.0"
+
+def __getattr__(name: str) -> str:
+    if name == "__version__":
+        from .version import get_version
+
+        return get_version()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
