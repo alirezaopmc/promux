@@ -21,9 +21,7 @@ logger = logging.getLogger(__name__)
 class QuotaClient:
     """Client for Cloud Code Assist and Google UserInfo REST endpoints."""
 
-    def __init__(
-        self, token: str, base_url: str | None = None, timeout: float | None = None
-    ):
+    def __init__(self, token: str, base_url: str | None = None, timeout: float | None = None):
         self.token = token
         self.base_url = (base_url or detect_code_assist_url()).rstrip("/")
         self.timeout = timeout if timeout is not None else get_default_http_timeout()

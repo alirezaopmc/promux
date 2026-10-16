@@ -39,4 +39,3 @@ def storage_with_profiles(tmp_path, sample_token_dict):
     storage.save_profile("work", email="work@company.com", project_id="test-proj")
     storage.save_profile("personal", email="personal@home.org", project_id="test-proj-2")
     return storage
-

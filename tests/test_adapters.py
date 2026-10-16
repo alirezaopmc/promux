@@ -158,13 +158,16 @@ def test_agy_adapter_delegation(tmp_path, monkeypatch):
     assert watcher.storage == storage
 
     # test fetch_quota delegation
-    monkeypatch.setattr("promux.cli._fetch_account_quota", lambda s, name: (None, "test-proj", None))
+    monkeypatch.setattr(
+        "promux.cli._fetch_account_quota", lambda s, name: (None, "test-proj", None)
+    )
     qs, proj, err = adapter.fetch_quota(storage, "test")
     assert proj == "test-proj"
 
     # test refresh_account delegation
-    monkeypatch.setattr("promux.cli._refresh_account_token", lambda s, name, force=False: (True, "refreshed"))
+    monkeypatch.setattr(
+        "promux.cli._refresh_account_token", lambda s, name, force=False: (True, "refreshed")
+    )
     ok, msg = adapter.refresh_account(storage, "test", force=True)
     assert ok is True
     assert msg == "refreshed"
-

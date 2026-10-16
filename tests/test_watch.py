@@ -548,5 +548,3 @@ def test_watch_check_and_renew_tokens_standby_account(tmp_path, monkeypatch):
     # Live token MUST NOT be touched
     live_data = json.loads(storage.live_token.read_text())
     assert live_data["token"]["access_token"] == "act_tok"
-
-

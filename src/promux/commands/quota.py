@@ -413,9 +413,7 @@ def cmd_quota(
                     record["third_party"] = {
                         "5h_remaining": qs.third_party_5h_remaining,
                         "5h_reset": qs.third_party_5h_reset,
-                        "5h_reset_relative": format_relative_countdown(
-                            qs.third_party_5h_reset
-                        ),
+                        "5h_reset_relative": format_relative_countdown(qs.third_party_5h_reset),
                         "weekly_remaining": qs.third_party_weekly_remaining,
                         "weekly_reset": qs.third_party_weekly_reset,
                         "weekly_reset_relative": format_relative_countdown(
@@ -452,9 +450,7 @@ def cmd_quota(
     print(header)
     print("-" * len(header))
     for active_mark, acct_name, g5, gw, c5, cw in text_rows:
-        print(
-            f"{active_mark:<7} {acct_name:<17} {g5:<20} {gw:<20} {c5:<20} {cw:<20}"
-        )
+        print(f"{active_mark:<7} {acct_name:<17} {g5:<20} {gw:<20} {c5:<20} {cw:<20}")
 
     return 0
 
@@ -558,9 +554,8 @@ def cmd_refresh(
                         if storage.live_token.exists():
                             curr_live_data = _read_token_data(storage.live_token)
                             curr_lr = _extract_refresh_token(curr_live_data)
-                            ref_lr = (
-                                _extract_refresh_token(new_data)
-                                or _extract_refresh_token(token_data)
+                            ref_lr = _extract_refresh_token(new_data) or _extract_refresh_token(
+                                token_data
                             )
                             if curr_lr and ref_lr and curr_lr != ref_lr:
                                 should_sync_live = False

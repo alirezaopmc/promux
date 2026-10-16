@@ -23,19 +23,21 @@ CLI_LOG: Path
 LOG_DIR: Path
 DEFAULT_HTTP_TIMEOUT: float
 
-_LAZY_PATH_NAMES: frozenset[str] = frozenset({
-    "PROMUX_HOME",
-    "ACCOUNTS_DIR",
-    "STATE_FILE",
-    "LOCK_FILE",
-    "CONFIG_FILE",
-    "CACHE_DIR",
-    "QUOTA_CACHE_FILE",
-    "GEMINI_CLI_HOME",
-    "LIVE_TOKEN",
-    "CLI_LOG",
-    "LOG_DIR",
-})
+_LAZY_PATH_NAMES: frozenset[str] = frozenset(
+    {
+        "PROMUX_HOME",
+        "ACCOUNTS_DIR",
+        "STATE_FILE",
+        "LOCK_FILE",
+        "CONFIG_FILE",
+        "CACHE_DIR",
+        "QUOTA_CACHE_FILE",
+        "GEMINI_CLI_HOME",
+        "LIVE_TOKEN",
+        "CLI_LOG",
+        "LOG_DIR",
+    }
+)
 _ALL_LAZY_NAMES: frozenset[str] = _LAZY_PATH_NAMES | frozenset({"DEFAULT_HTTP_TIMEOUT"})
 
 # Clean up any cached lazy attributes on module reload

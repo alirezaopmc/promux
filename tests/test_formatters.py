@@ -90,13 +90,9 @@ def test_format_quota_detail():
 
     assert format_quota_detail(None, None, now=base_now) == "-"
     assert format_quota_detail(1.0, None, now=base_now) == "100.0% (-)"
+    assert format_quota_detail(0.98, t_2h_15m, now=base_now) == "98.0% (2h 15m left - 14:15 UTC)"
     assert (
-        format_quota_detail(0.98, t_2h_15m, now=base_now)
-        == "98.0% (2h 15m left - 14:15 UTC)"
-    )
-    assert (
-        format_quota_detail(0.85, t_3d_4h, now=base_now)
-        == "85.0% (3d 4h left - Sep 12 16:00 UTC)"
+        format_quota_detail(0.85, t_3d_4h, now=base_now) == "85.0% (3d 4h left - Sep 12 16:00 UTC)"
     )
 
 
@@ -114,4 +110,3 @@ def test_format_expiry_table():
     # Valid offset ISO timestamp converts to UTC
     res_offset = format_expiry_table("2026-09-09T08:15:00+05:00")
     assert res_offset == "2026-09-09 03:15:00"
-

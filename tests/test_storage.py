@@ -335,10 +335,12 @@ def test_switch_profile_auto_refreshes_native(tmp_path, sample_token_dict, monke
 
     class MockResp:
         def read(self):
-            return json.dumps({
-                "access_token": "native_refreshed_b",
-                "expires_in": 3600,
-            }).encode("utf-8")
+            return json.dumps(
+                {
+                    "access_token": "native_refreshed_b",
+                    "expires_in": 3600,
+                }
+            ).encode("utf-8")
 
         def __enter__(self):
             return self
@@ -418,13 +420,17 @@ def test_switch_profile_fallback_agy_renewal(tmp_path, sample_token_dict, monkey
     monkeypatch.setattr("shutil.which", lambda cmd: "/mock/bin/agy" if cmd == "agy" else None)
 
     def mock_run(cmd, capture_output=True, timeout=10, check=False):
-        live_token.write_text(json.dumps({
-            "token": {
-                "access_token": "agy_refreshed_b",
-                "refresh_token": "ref_b",
-                "expiry": "2030-01-01T00:00:00Z",
-            }
-        }))
+        live_token.write_text(
+            json.dumps(
+                {
+                    "token": {
+                        "access_token": "agy_refreshed_b",
+                        "refresh_token": "ref_b",
+                        "expiry": "2030-01-01T00:00:00Z",
+                    }
+                }
+            )
+        )
         return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr("subprocess.run", mock_run)

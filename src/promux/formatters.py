@@ -37,10 +37,7 @@ def format_expiry_table(expiry_str: str | None) -> str:
 _format_expiry_table = format_expiry_table
 
 
-
-def format_relative_countdown(
-    reset_iso: str | None, now: datetime | None = None
-) -> str:
+def format_relative_countdown(reset_iso: str | None, now: datetime | None = None) -> str:
     """Calculate compact relative countdown (e.g. '2h 15m', '3d 4h', '18m', or '-')."""
     reset_dt = parse_iso_utc(reset_iso)
     if reset_dt is None:
@@ -66,9 +63,7 @@ def format_relative_countdown(
     return f"{minutes}m"
 
 
-def format_quota_cell(
-    val: float | None, reset_iso: str | None, now: datetime | None = None
-) -> str:
+def format_quota_cell(val: float | None, reset_iso: str | None, now: datetime | None = None) -> str:
     """Format overview table cell: e.g. '98.0% (2h 15m)', '85.0% (3d 4h)', '100.0% (-)'."""
     if val is None:
         return "-"

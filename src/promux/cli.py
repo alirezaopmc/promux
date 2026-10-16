@@ -252,9 +252,7 @@ def build_parser() -> argparse.ArgumentParser:
     watch_p.add_argument(
         "--poll-seconds", type=float, default=DEFAULT_POLL_SECONDS, help="Log polling interval"
     )
-    watch_p.add_argument(
-        "--cooldown", type=int, default=None, help="Cooldown override in minutes"
-    )
+    watch_p.add_argument("--cooldown", type=int, default=None, help="Cooldown override in minutes")
 
     tools_p = sub.add_parser("tools", parents=[common], help="List supported developer CLI tools")
     tools_p.add_argument("action", nargs="?", default="list", choices=["list"], help="Action")
@@ -293,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
     if first_pos_idx is not None and registry.has_tool(raw_args[first_pos_idx]):
         tool_name_used = raw_args[first_pos_idx]
         target_tool = registry.get(tool_name_used)
-        remaining_args = raw_args[:first_pos_idx] + raw_args[first_pos_idx + 1:]
+        remaining_args = raw_args[:first_pos_idx] + raw_args[first_pos_idx + 1 :]
         next_pos = None
         for arg in remaining_args:
             if not arg.startswith("-"):

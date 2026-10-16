@@ -325,6 +325,7 @@ def _refresh_token_file(
 ) -> str | None:
     """Attempt to refresh an expired token using its refresh_token or agy fallback."""
     import sys
+
     cli_mod = sys.modules.get("promux.cli")
     if cli_mod:
         cli_refresh = getattr(cli_mod, "_refresh_token_file", None)
@@ -378,6 +379,7 @@ def get_or_refresh_access_token(
 ) -> str | None:
     """Get access token, refreshing it if expired and refresh_token is present."""
     import sys
+
     cli_mod = sys.modules.get("promux.cli")
     if cli_mod:
         cli_fn = getattr(cli_mod, "_get_or_refresh_access_token", None)
@@ -398,4 +400,3 @@ def get_or_refresh_access_token(
         if refreshed:
             return refreshed
     return access_token
-

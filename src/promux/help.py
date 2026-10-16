@@ -53,8 +53,7 @@ COMMAND_DETAILS: dict[str, str] = {
     "remove": "Delete a saved profile and its associated token from the vault.",
     "whoami": "Print the currently active profile name, email, and token expiry.",
     "quota": (
-        "Show Cloud Code Assist quota status for all (or a specific) profile"
-        " (supports --no-cache)."
+        "Show Cloud Code Assist quota status for all (or a specific) profile (supports --no-cache)."
     ),
     "refresh": "Force-refresh OAuth access tokens for vault accounts.",
     "watch": "Start the reactive log-tailer daemon; auto-rotates on quota exhaustion.",
@@ -162,8 +161,6 @@ def print_tool_help(tool_name: str, no_color: bool = False) -> None:
     header = bold(f"promux {tool_name}", enabled=use_color)
     print(header)
     print()
-    print(
-        f"  Manage profiles and quota for the {cyan(tool_name, enabled=use_color)} tool adapter."
-    )
+    print(f"  Manage profiles and quota for the {cyan(tool_name, enabled=use_color)} tool adapter.")
     print()
     print(dim("Run 'promux --help' to see all available commands.", enabled=use_color))

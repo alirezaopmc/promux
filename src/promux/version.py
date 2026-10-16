@@ -14,11 +14,13 @@ def get_version() -> str:
     """Return the installed package version, resolved lazily."""
     try:
         from ._version import __version__
+
         return __version__
     except ImportError:
         pass
     try:
         from importlib.metadata import version
+
         return version("promux")
     except Exception:
         return "0.4.0"

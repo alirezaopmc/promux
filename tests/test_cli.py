@@ -648,7 +648,9 @@ def test_fetch_account_quota_success(tmp_path, sample_token_dict, monkeypatch):
     assert is_cached is False
 
 
-def test_fetch_account_quota_caches_project_id_transactionally(tmp_path, sample_token_dict, monkeypatch):
+def test_fetch_account_quota_caches_project_id_transactionally(
+    tmp_path, sample_token_dict, monkeypatch
+):
     from contextlib import contextmanager
 
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
@@ -1113,7 +1115,9 @@ def test_refresh_token_fallback_agy_success(tmp_path, monkeypatch):
     target_dir = storage.accounts_dir / "target_acct"
     target_dir.mkdir(parents=True, exist_ok=True)
     target_token = target_dir / "antigravity-oauth-token"
-    target_token.write_text(json.dumps({"token": {"access_token": "target_old", "expiry": "2020-01-01T00:00:00Z"}}))
+    target_token.write_text(
+        json.dumps({"token": {"access_token": "target_old", "expiry": "2020-01-01T00:00:00Z"}})
+    )
 
     # Mock shutil.which to say 'agy' exists
     monkeypatch.setattr("shutil.which", lambda cmd: "/mock/bin/agy" if cmd == "agy" else None)
@@ -1121,7 +1125,16 @@ def test_refresh_token_fallback_agy_success(tmp_path, monkeypatch):
     # Mock subprocess.run to simulate agy updating the staged live token
     def mock_run(cmd, capture_output=True, timeout=10, check=False):
         # Simulate agy refreshing the live token file
-        live_token.write_text(json.dumps({"token": {"access_token": "target_renewed_by_agy", "expiry": "2030-01-01T00:00:00Z"}}))
+        live_token.write_text(
+            json.dumps(
+                {
+                    "token": {
+                        "access_token": "target_renewed_by_agy",
+                        "expiry": "2030-01-01T00:00:00Z",
+                    }
+                }
+            )
+        )
         return subprocess.CompletedProcess(cmd, 0, stdout=b"gemini-3.8-flash", stderr=b"")
 
     monkeypatch.setattr("subprocess.run", mock_run)
@@ -1189,13 +1202,24 @@ def test_refresh_token_fallback_agy_when_live_did_not_exist(tmp_path, monkeypatc
     target_dir = storage.accounts_dir / "target_acct"
     target_dir.mkdir(parents=True, exist_ok=True)
     target_token = target_dir / "antigravity-oauth-token"
-    target_token.write_text(json.dumps({"token": {"access_token": "target_old", "expiry": "2020-01-01T00:00:00Z"}}))
+    target_token.write_text(
+        json.dumps({"token": {"access_token": "target_old", "expiry": "2020-01-01T00:00:00Z"}})
+    )
 
     monkeypatch.setattr("shutil.which", lambda cmd: "/mock/bin/agy" if cmd == "agy" else None)
 
     def mock_run(cmd, capture_output=True, timeout=10, check=False):
         assert live_token.exists()
-        live_token.write_text(json.dumps({"token": {"access_token": "target_renewed_live_none", "expiry": "2030-01-01T00:00:00Z"}}))
+        live_token.write_text(
+            json.dumps(
+                {
+                    "token": {
+                        "access_token": "target_renewed_live_none",
+                        "expiry": "2030-01-01T00:00:00Z",
+                    }
+                }
+            )
+        )
         return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr("subprocess.run", mock_run)
@@ -1228,7 +1252,9 @@ def test_refresh_token_fallback_agy_failure_or_timeout(tmp_path, monkeypatch):
     target_dir = storage.accounts_dir / "target_acct"
     target_dir.mkdir(parents=True, exist_ok=True)
     target_token = target_dir / "antigravity-oauth-token"
-    target_token.write_text(json.dumps({"token": {"access_token": "target_old", "expiry": "2020-01-01T00:00:00Z"}}))
+    target_token.write_text(
+        json.dumps({"token": {"access_token": "target_old", "expiry": "2020-01-01T00:00:00Z"}})
+    )
 
     monkeypatch.setattr("shutil.which", lambda cmd: "/mock/bin/agy" if cmd == "agy" else None)
 
@@ -1262,12 +1288,18 @@ def test_refresh_token_fallback_agy_same_file(tmp_path, monkeypatch):
 
     storage = get_storage()
     live_token = storage.live_token
-    live_token.write_text(json.dumps({"token": {"access_token": "live_old", "expiry": "2020-01-01T00:00:00Z"}}))
+    live_token.write_text(
+        json.dumps({"token": {"access_token": "live_old", "expiry": "2020-01-01T00:00:00Z"}})
+    )
 
     monkeypatch.setattr("shutil.which", lambda cmd: "/mock/bin/agy" if cmd == "agy" else None)
 
     def mock_run(cmd, capture_output=True, timeout=10, check=False):
-        live_token.write_text(json.dumps({"token": {"access_token": "live_renewed", "expiry": "2030-01-01T00:00:00Z"}}))
+        live_token.write_text(
+            json.dumps(
+                {"token": {"access_token": "live_renewed", "expiry": "2030-01-01T00:00:00Z"}}
+            )
+        )
         return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr("subprocess.run", mock_run)
@@ -1295,7 +1327,10 @@ def test_refresh_token_file_two_tier(tmp_path, monkeypatch):
     # Case 1: Native refresh succeeds
     monkeypatch.setattr("promux.cli._refresh_token_native", lambda p, td: "tier1_acc")
     fallback_called = []
-    monkeypatch.setattr("promux.cli._refresh_token_fallback_agy", lambda p, s: fallback_called.append(True) or "tier2_acc")
+    monkeypatch.setattr(
+        "promux.cli._refresh_token_fallback_agy",
+        lambda p, s: fallback_called.append(True) or "tier2_acc",
+    )
 
     res = _refresh_token_file(token_path, token_data, storage=storage)
     assert res == "tier1_acc"
@@ -1422,6 +1457,7 @@ def test_cli_refresh_syncs_to_active_live_token(tmp_path, sample_token_dict, mon
     capsys.readouterr()
 
     storage = get_storage()
+
     # Write refreshed token when native refresh is called
     def mock_refresh_native(token_path, token_data):
         token_data["token"]["access_token"] = "new_synced_token"
@@ -1558,8 +1594,9 @@ def test_refresh_account_token_direct(tmp_path, sample_token_dict, monkeypatch):
     assert "no token data found" in msg.lower()
 
 
-
-def test_cli_refresh_identity_mismatch_prevents_sync(tmp_path, sample_token_dict, monkeypatch, capsys):
+def test_cli_refresh_identity_mismatch_prevents_sync(
+    tmp_path, sample_token_dict, monkeypatch, capsys
+):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
     from promux.cli import get_storage, main
 
@@ -1609,7 +1646,9 @@ def test_cli_switch_auto_refreshes_expired(tmp_path, sample_token_dict, monkeypa
     assert main(["switch", "acct1"]) == 0
     capsys.readouterr()
 
-    monkeypatch.setattr("promux.cli._get_or_refresh_access_token", lambda p, storage=None: "refreshed_acct2")
+    monkeypatch.setattr(
+        "promux.cli._get_or_refresh_access_token", lambda p, storage=None: "refreshed_acct2"
+    )
 
     rc = main(["switch", "acct2"])
     assert rc == 0
@@ -1618,7 +1657,9 @@ def test_cli_switch_auto_refreshes_expired(tmp_path, sample_token_dict, monkeypa
     assert live_data["token"]["access_token"] == "refreshed_acct2"
 
 
-def test_quota_auto_refreshes_vault_and_syncs_live(tmp_path, sample_token_dict, monkeypatch, capsys):
+def test_quota_auto_refreshes_vault_and_syncs_live(
+    tmp_path, sample_token_dict, monkeypatch, capsys
+):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
     from promux.cli import get_storage, main
     from promux.quota import QuotaClient
@@ -1810,7 +1851,9 @@ def test_quota_revoked_token_error_handling(tmp_path, sample_token_dict, monkeyp
     import urllib.error
 
     def mock_urlopen_revoked(req, timeout=10):
-        err_bytes = b'{"error": "invalid_grant", "error_description": "Token has been expired or revoked."}'
+        err_bytes = (
+            b'{"error": "invalid_grant", "error_description": "Token has been expired or revoked."}'
+        )
         raise urllib.error.HTTPError(
             url="https://oauth2.googleapis.com/token",
             code=400,
@@ -1835,7 +1878,9 @@ def test_quota_revoked_token_error_handling(tmp_path, sample_token_dict, monkeyp
     assert "re-authenticate via 'agy'" in res["error"].lower()
 
 
-def test_quota_multi_profile_does_not_leak_revoked_state(tmp_path, sample_token_dict, monkeypatch, capsys):
+def test_quota_multi_profile_does_not_leak_revoked_state(
+    tmp_path, sample_token_dict, monkeypatch, capsys
+):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
     import io
     import urllib.error
@@ -1871,7 +1916,9 @@ def test_quota_multi_profile_does_not_leak_revoked_state(tmp_path, sample_token_
 
     # Mock urlopen to fail on refresh with invalid_grant
     def mock_urlopen_revoked(req, timeout=10):
-        err_bytes = b'{"error": "invalid_grant", "error_description": "Token has been expired or revoked."}'
+        err_bytes = (
+            b'{"error": "invalid_grant", "error_description": "Token has been expired or revoked."}'
+        )
         raise urllib.error.HTTPError(
             url="https://oauth2.googleapis.com/token",
             code=400,
@@ -1984,7 +2031,9 @@ def test_cmd_quota_concurrent_execution_and_order(storage_with_profiles, monkeyp
     from promux.cli import cmd_quota
     from promux.models import QuotaSummary
 
-    storage_with_profiles.save_profile("staging", email="staging@company.com", project_id="proj-staging")
+    storage_with_profiles.save_profile(
+        "staging", email="staging@company.com", project_id="proj-staging"
+    )
 
     mock_qs = QuotaSummary(
         gemini_5h_remaining=0.98,
@@ -2144,13 +2193,15 @@ def test_cmd_switch_smart_gemini_success(monkeypatch, tmp_path, capsys):
     (storage.accounts_dir / "acc1" / "antigravity-oauth-token").write_text('{"access_token":"t1"}')
     (storage.accounts_dir / "acc2").mkdir(parents=True)
     (storage.accounts_dir / "acc2" / "antigravity-oauth-token").write_text('{"access_token":"t2"}')
-    storage.save_state({
-        "active": "acc1",
-        "accounts": {
-            "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
-            "acc2": AccountMeta(name="acc2", enabled=True).to_dict(),
-        },
-    })
+    storage.save_state(
+        {
+            "active": "acc1",
+            "accounts": {
+                "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
+                "acc2": AccountMeta(name="acc2", enabled=True).to_dict(),
+            },
+        }
+    )
     storage.live_token.write_text('{"access_token":"t1"}')
 
     def mock_fetch(st, name):
@@ -2186,13 +2237,15 @@ def test_cmd_switch_smart_json_output(monkeypatch, tmp_path, capsys):
     (storage.accounts_dir / "acc1" / "antigravity-oauth-token").write_text('{"access_token":"t1"}')
     (storage.accounts_dir / "acc2").mkdir(parents=True)
     (storage.accounts_dir / "acc2" / "antigravity-oauth-token").write_text('{"access_token":"t2"}')
-    storage.save_state({
-        "active": "acc1",
-        "accounts": {
-            "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
-            "acc2": AccountMeta(name="acc2", enabled=True).to_dict(),
-        },
-    })
+    storage.save_state(
+        {
+            "active": "acc1",
+            "accounts": {
+                "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
+                "acc2": AccountMeta(name="acc2", enabled=True).to_dict(),
+            },
+        }
+    )
     storage.live_token.write_text('{"access_token":"t1"}')
 
     def mock_fetch(st, name):
@@ -2244,13 +2297,15 @@ def test_cmd_switch_smart_no_candidates(monkeypatch, tmp_path, capsys):
     (storage.accounts_dir / "acc1" / "antigravity-oauth-token").write_text('{"access_token":"t1"}')
     (storage.accounts_dir / "acc2").mkdir(parents=True)
     (storage.accounts_dir / "acc2" / "antigravity-oauth-token").write_text('{"access_token":"t2"}')
-    storage.save_state({
-        "active": "acc1",
-        "accounts": {
-            "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
-            "acc2": AccountMeta(name="acc2", enabled=True).to_dict(),
-        },
-    })
+    storage.save_state(
+        {
+            "active": "acc1",
+            "accounts": {
+                "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
+                "acc2": AccountMeta(name="acc2", enabled=True).to_dict(),
+            },
+        }
+    )
     storage.live_token.write_text('{"access_token":"t1"}')
 
     def mock_fetch(st, name):
@@ -2262,8 +2317,7 @@ def test_cmd_switch_smart_no_candidates(monkeypatch, tmp_path, capsys):
     assert code == 1
     captured = capsys.readouterr()
     assert (
-        "Error: No standby accounts found with available quota for 'gemini' models"
-        in captured.err
+        "Error: No standby accounts found with available quota for 'gemini' models" in captured.err
     )
 
 
@@ -2285,13 +2339,15 @@ def test_cmd_switch_smart_model_claude(monkeypatch, tmp_path, capsys):
     (storage.accounts_dir / "acc1" / "antigravity-oauth-token").write_text('{"access_token":"t1"}')
     (storage.accounts_dir / "acc2").mkdir(parents=True)
     (storage.accounts_dir / "acc2" / "antigravity-oauth-token").write_text('{"access_token":"t2"}')
-    storage.save_state({
-        "active": "acc1",
-        "accounts": {
-            "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
-            "acc2": AccountMeta(name="acc2", enabled=True).to_dict(),
-        },
-    })
+    storage.save_state(
+        {
+            "active": "acc1",
+            "accounts": {
+                "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
+                "acc2": AccountMeta(name="acc2", enabled=True).to_dict(),
+            },
+        }
+    )
     storage.live_token.write_text('{"access_token":"t1"}')
 
     def mock_fetch(st, name):
@@ -2331,12 +2387,14 @@ def test_cmd_switch_smart_failure_json(monkeypatch, tmp_path, capsys):
     storage = StorageEngine(promux_home=promux_home / "tools" / "agy", gemini_home=gemini_home)
     (storage.accounts_dir / "acc1").mkdir(parents=True)
     (storage.accounts_dir / "acc1" / "antigravity-oauth-token").write_text('{"access_token":"t1"}')
-    storage.save_state({
-        "active": "acc1",
-        "accounts": {
-            "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
-        },
-    })
+    storage.save_state(
+        {
+            "active": "acc1",
+            "accounts": {
+                "acc1": AccountMeta(name="acc1", enabled=True).to_dict(),
+            },
+        }
+    )
     storage.live_token.write_text('{"access_token":"t1"}')
 
     code = main(["switch", "--smart", "--json"])
@@ -2456,7 +2514,9 @@ def test_quota_cache_fetch_account_quota_integration(tmp_path, sample_token_dict
     assert calls["count"] == 2  # Queried again!
 
 
-def test_quota_cache_cmd_quota_overview_and_detail_json(tmp_path, sample_token_dict, monkeypatch, capsys):
+def test_quota_cache_cmd_quota_overview_and_detail_json(
+    tmp_path, sample_token_dict, monkeypatch, capsys
+):
     _setup_env(tmp_path, monkeypatch, sample_token_dict)
     from promux.cli import cmd_quota, get_storage, main
     from promux.quota import QuotaClient

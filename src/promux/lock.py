@@ -59,9 +59,7 @@ def file_lock(
                 acquired = True
                 break
             if time.monotonic() - start >= timeout:
-                raise TimeoutError(
-                    f"Timed out after {timeout}s waiting for lock: {path}"
-                )
+                raise TimeoutError(f"Timed out after {timeout}s waiting for lock: {path}")
             time.sleep(poll_interval)
 
         yield path

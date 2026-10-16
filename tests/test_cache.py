@@ -54,23 +54,25 @@ def test_cache_expired_miss(tmp_path: Path):
 
     stale_time = (datetime.now(timezone.utc) - timedelta(seconds=350)).isoformat()
     cache_file.write_text(
-        json.dumps({
-            "accounts": {
-                "acct1": {
-                    "cached_at": stale_time,
-                    "quota": {
-                        "gemini_5h_remaining": 0.5,
-                        "gemini_weekly_remaining": 0.5,
-                        "third_party_5h_remaining": 1.0,
-                        "third_party_weekly_remaining": 1.0,
-                        "gemini_5h_reset": None,
-                        "gemini_weekly_reset": None,
-                        "third_party_5h_reset": None,
-                        "third_party_weekly_reset": None,
-                    },
+        json.dumps(
+            {
+                "accounts": {
+                    "acct1": {
+                        "cached_at": stale_time,
+                        "quota": {
+                            "gemini_5h_remaining": 0.5,
+                            "gemini_weekly_remaining": 0.5,
+                            "third_party_5h_remaining": 1.0,
+                            "third_party_weekly_remaining": 1.0,
+                            "gemini_5h_reset": None,
+                            "gemini_weekly_reset": None,
+                            "third_party_5h_reset": None,
+                            "third_party_weekly_reset": None,
+                        },
+                    }
                 }
             }
-        })
+        )
     )
 
     assert cache.get("acct1") is None
@@ -143,4 +145,3 @@ def test_cache_corrupt_cache_file_handled(tmp_path: Path):
     qs = QuotaSummary(gemini_5h_remaining=0.5)
     cache.set("acct1", qs)
     assert cache.get("acct1") is not None
-
