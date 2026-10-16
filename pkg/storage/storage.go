@@ -21,6 +21,8 @@ var (
 	ErrSrcTokenNotFound  = errors.New("source token not found")
 )
 
+type txContextKey struct{}
+
 type StorageEngine struct {
 	Home        string
 	GeminiHome  string
@@ -131,13 +133,39 @@ func (s *StorageEngine) SaveState(state *models.State) error {
 }
 
 func (s *StorageEngine) Transaction(ctx context.Context, fn func(state *models.State) error) error {
+	if txState, ok := ctx.Value(txContextKey{}).(*models.State); ok {
+		return fn(txState)
+	}
+
 	return lock.WithLock(ctx, s.LockFile, config.DefaultLockTimeout, func() error {
 		state, err := s.LoadState()
 		if err != nil {
 			return err
 		}
 
+		txCtx := context.WithValue(ctx, txContextKey{}, state)
 		if err := fn(state); err != nil {
+			return err
+		}
+
+		_ = txCtx
+		return s.atomicWriteJSON(s.StateFile, state)
+	})
+}
+
+func (s *StorageEngine) TransactionWithContext(ctx context.Context, fn func(txCtx context.Context, state *models.State) error) error {
+	if txState, ok := ctx.Value(txContextKey{}).(*models.State); ok {
+		return fn(ctx, txState)
+	}
+
+	return lock.WithLock(ctx, s.LockFile, config.DefaultLockTimeout, func() error {
+		state, err := s.LoadState()
+		if err != nil {
+			return err
+		}
+
+		txCtx := context.WithValue(ctx, txContextKey{}, state)
+		if err := fn(txCtx, state); err != nil {
 			return err
 		}
 
@@ -187,7 +215,11 @@ func (s *StorageEngine) SaveProfile(name string, email, projectID *string, planT
 }
 
 func (s *StorageEngine) SwitchProfile(name string) error {
-	return s.Transaction(context.Background(), func(state *models.State) error {
+	return s.SwitchProfileWithContext(context.Background(), name)
+}
+
+func (s *StorageEngine) SwitchProfileWithContext(ctx context.Context, name string) error {
+	return s.Transaction(ctx, func(state *models.State) error {
 		acct, ok := state.Accounts[name]
 		if !ok {
 			return fmt.Errorf("%w: %s", ErrAccountNotFound, name)
