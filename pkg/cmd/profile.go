@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"text/tabwriter"
 	"time"
 
 	"github.com/fatih/color"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/alirezaopmc/promux/pkg/failover"
 	"github.com/alirezaopmc/promux/pkg/models"
+	"github.com/alirezaopmc/promux/pkg/terminal"
 )
 
 func newProfileCmd() *cobra.Command {
@@ -60,8 +60,7 @@ func newListCmd() *cobra.Command {
 			sort.Strings(accountNames)
 
 			now := time.Now().UTC()
-			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "  PROFILE\tSTATUS\tLAST USED\tEMAIL\tPLAN")
+			tbl := terminal.NewTable("  PROFILE", "STATUS", "LAST USED", "EMAIL", "PLAN")
 
 			activeName := ""
 			if state.Active != nil {
@@ -73,7 +72,7 @@ func newListCmd() *cobra.Command {
 				prefix := " "
 				st := acct.State(now)
 				if name == activeName {
-					prefix = "*"
+					prefix = color.GreenString("*")
 					st = models.StateActive
 				}
 
@@ -97,9 +96,9 @@ func newListCmd() *cobra.Command {
 					email = *acct.Email
 				}
 
-				fmt.Fprintf(w, "%s %s\t%s\t%s\t%s\t%s\n", prefix, name, statusStr, lastUsed, email, acct.PlanType)
+				tbl.AddRow(fmt.Sprintf("%s %s", prefix, name), statusStr, lastUsed, email, acct.PlanType)
 			}
-			return w.Flush()
+			return tbl.Render(out)
 		},
 	}
 }

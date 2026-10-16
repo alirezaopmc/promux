@@ -3,10 +3,11 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"text/tabwriter"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+
+	"github.com/alirezaopmc/promux/pkg/terminal"
 )
 
 type ToolInfo struct {
@@ -53,8 +54,7 @@ func newToolsCmd() *cobra.Command {
 				return json.NewEncoder(out).Encode(SupportedTools)
 			}
 
-			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "  TOOL\tNAME\tSTATUS\tCAPABILITIES")
+			tbl := terminal.NewTable("  TOOL", "NAME", "STATUS", "CAPABILITIES")
 
 			for _, t := range SupportedTools {
 				prefix := " "
@@ -66,9 +66,9 @@ func newToolsCmd() *cobra.Command {
 					statusStr = color.GreenString(statusStr)
 				}
 				caps := fmt.Sprintf("%v", t.Features)
-				fmt.Fprintf(w, "%s %s\t%s\t%s\t%s\n", prefix, t.Name, t.DisplayName, statusStr, caps)
+				tbl.AddRow(fmt.Sprintf("%s %s", prefix, t.Name), t.DisplayName, statusStr, caps)
 			}
-			return w.Flush()
+			return tbl.Render(out)
 		},
 	}
 }

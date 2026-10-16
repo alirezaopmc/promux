@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
-	"text/tabwriter"
 	"time"
 
 	"github.com/fatih/color"
@@ -18,6 +17,7 @@ import (
 	"github.com/alirezaopmc/promux/pkg/models"
 	"github.com/alirezaopmc/promux/pkg/quota"
 	"github.com/alirezaopmc/promux/pkg/storage"
+	"github.com/alirezaopmc/promux/pkg/terminal"
 )
 
 type ModelQuotaRecord struct {
@@ -268,18 +268,19 @@ func listAllQuotas(out io.Writer, store *storage.StorageEngine, cache *quota.Quo
 		return enc.Encode(records)
 	}
 
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "  PROFILE\tGEMINI (5H)\tGEMINI (WK)\tCLAUDE (5H)\tCLAUDE (WK)")
+	tbl := terminal.NewTable("  PROFILE", "GEMINI (5H)", "GEMINI (WK)", "CLAUDE (5H)", "CLAUDE (WK)")
 
 	for _, res := range results {
 		prefix := " "
 		if res.isActive {
-			prefix = "*"
+			prefix = color.GreenString("*")
 		}
+
+		prefixName := fmt.Sprintf("%s %s", prefix, res.name)
 
 		if res.err != nil {
 			errStr := color.RedString("[ERROR]")
-			fmt.Fprintf(w, "%s %s\t%s\t%s\t%s\t%s\n", prefix, res.name, errStr, "-", "-", "-")
+			tbl.AddRow(prefixName, errStr, "-", "-", "-")
 			continue
 		}
 
@@ -288,20 +289,23 @@ func listAllQuotas(out io.Writer, store *storage.StorageEngine, cache *quota.Quo
 		c5 := formatOverviewCell(res.qs.ThirdParty5hRemaining, res.qs.ThirdParty5hReset, now)
 		cw := formatOverviewCell(res.qs.ThirdPartyWeeklyRemaining, res.qs.ThirdPartyWeeklyReset, now)
 
-		fmt.Fprintf(w, "%s %s\t%s\t%s\t%s\t%s\n", prefix, res.name, g5, gw, c5, cw)
+		tbl.AddRow(prefixName, g5, gw, c5, cw)
 	}
 
-	return w.Flush()
+	return tbl.Render(out)
 }
 
 func formatOverviewCell(fraction float64, resetStr *string, now time.Time) string {
-	pct := quota.FormatPercentage(fraction)
+	pctRaw := quota.FormatPercentage(fraction)
+	pctFormatted := fmt.Sprintf("%6s", pctRaw)
+
+	var pct string
 	if fraction > 0.5 {
-		pct = color.GreenString(pct)
+		pct = color.GreenString(pctFormatted)
 	} else if fraction > 0.2 {
-		pct = color.YellowString(pct)
+		pct = color.YellowString(pctFormatted)
 	} else {
-		pct = color.RedString(pct)
+		pct = color.RedString(pctFormatted)
 	}
 
 	if resetStr != nil && *resetStr != "" {
