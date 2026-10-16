@@ -129,13 +129,15 @@ func fetchAccountQuota(store *storage.StorageEngine, cache *quota.QuotaCache, ta
 		return nil, "", err
 	}
 
-	tokenPath := store.LiveToken
 	state, _ := store.LoadState()
-	if state.Active == nil || *state.Active != targetName {
-		tokenPath = filepath.Join(store.AccountsDir, targetName, "antigravity-oauth-token")
+	isActive := state.Active != nil && *state.Active == targetName
+
+	if isActive {
+		auth.SafeSyncLiveToVault(store, targetName)
 	}
 
-	tokenData, err := auth.ReadTokenData(tokenPath)
+	vaultToken := filepath.Join(store.AccountsDir, targetName, "antigravity-oauth-token")
+	tokenData, err := auth.ReadTokenData(vaultToken)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to read token: %w", err)
 	}
@@ -146,7 +148,7 @@ func fetchAccountQuota(store *storage.StorageEngine, cache *quota.QuotaCache, ta
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to refresh token: %w", err)
 		}
-		tokenData, _ = auth.ReadTokenData(tokenPath)
+		tokenData, _ = auth.ReadTokenData(vaultToken)
 		accToken = auth.ExtractAccessToken(tokenData)
 	}
 
@@ -272,7 +274,7 @@ func listAllQuotas(out io.Writer, store *storage.StorageEngine, cache *quota.Quo
 	for _, res := range results {
 		prefix := " "
 		if res.isActive {
-			prefix = color.GreenString("*")
+			prefix = "*"
 		}
 
 		if res.err != nil {
@@ -302,20 +304,25 @@ func formatOverviewCell(fraction float64, resetStr *string, now time.Time) strin
 		pct = color.RedString(pct)
 	}
 
-	countdown := "-"
 	if resetStr != nil && *resetStr != "" {
 		if t, ok := quota.ParseResetTimestamp(*resetStr); ok {
-			countdown = quota.FormatResetDuration(t, now)
+			countdown := quota.FormatResetDuration(t, now)
+			if countdown != "" && countdown != "-" && countdown != "now" {
+				return fmt.Sprintf("%s (%s)", pct, countdown)
+			}
 		}
 	}
 
-	return fmt.Sprintf("%s (%s)", pct, countdown)
+	return pct
 }
 
 func formatResetRelative(resetStr *string, now time.Time) string {
 	if resetStr != nil && *resetStr != "" {
 		if t, ok := quota.ParseResetTimestamp(*resetStr); ok {
-			return quota.FormatResetDuration(t, now)
+			dur := quota.FormatResetDuration(t, now)
+			if dur != "" && dur != "now" {
+				return dur
+			}
 		}
 	}
 	return "-"

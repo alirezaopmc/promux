@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alirezaopmc/promux/pkg/config"
@@ -26,7 +27,10 @@ type TokenRefreshResponse struct {
 	TokenType    string  `json:"token_type"`
 }
 
-var ErrTokenRevoked = errors.New("refresh token has been revoked (invalid_grant)")
+var (
+	ErrTokenRevoked      = errors.New("refresh token has been revoked (invalid_grant)")
+	fallbackRefreshMutex sync.Mutex
+)
 
 func RefreshTokenNative(tokenPath string, tokenData RawTokenData) (string, bool, error) {
 	refToken := ExtractRefreshToken(tokenData)
@@ -120,6 +124,30 @@ func RefreshTokenNative(tokenPath string, tokenData RawTokenData) (string, bool,
 	return res.AccessToken, false, nil
 }
 
+func SafeSyncLiveToVault(store *storage.StorageEngine, accountName string) {
+	fallbackRefreshMutex.Lock()
+	defer fallbackRefreshMutex.Unlock()
+
+	state, err := store.LoadState()
+	if err != nil || state.Active == nil || *state.Active != accountName {
+		return
+	}
+	vaultToken := filepath.Join(store.AccountsDir, accountName, "antigravity-oauth-token")
+	_ = SyncActiveTokens(store.LiveToken, vaultToken)
+}
+
+func SafeSyncVaultToLive(store *storage.StorageEngine, accountName string) {
+	fallbackRefreshMutex.Lock()
+	defer fallbackRefreshMutex.Unlock()
+
+	state, err := store.LoadState()
+	if err != nil || state.Active == nil || *state.Active != accountName {
+		return
+	}
+	vaultToken := filepath.Join(store.AccountsDir, accountName, "antigravity-oauth-token")
+	_ = SyncActiveTokens(vaultToken, store.LiveToken)
+}
+
 func RefreshAccountToken(store *storage.StorageEngine, accountName string, force bool) (bool, error) {
 	state, err := store.LoadState()
 	if err != nil {
@@ -129,13 +157,11 @@ func RefreshAccountToken(store *storage.StorageEngine, accountName string, force
 	isActive := state.Active != nil && *state.Active == accountName
 	vaultToken := filepath.Join(store.AccountsDir, accountName, "antigravity-oauth-token")
 
-	tokenPath := vaultToken
-	if isActive && store.LiveToken != "" {
-		if _, err := os.Stat(store.LiveToken); err == nil {
-			tokenPath = store.LiveToken
-		}
+	if isActive {
+		SafeSyncLiveToVault(store, accountName)
 	}
 
+	tokenPath := vaultToken
 	data, err := ReadTokenData(tokenPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to read token for %s: %w", accountName, err)
@@ -156,19 +182,18 @@ func RefreshAccountToken(store *storage.StorageEngine, accountName string, force
 		}
 	}
 
-	// If active, sync between live and vault
+	// If active, sync vault back to live
 	if isActive {
-		if tokenPath == store.LiveToken {
-			_ = SyncActiveTokens(store.LiveToken, vaultToken)
-		} else {
-			_ = SyncActiveTokens(vaultToken, store.LiveToken)
-		}
+		SafeSyncVaultToLive(store, accountName)
 	}
 
 	return true, nil
 }
 
 func RefreshTokenFallbackAgy(store *storage.StorageEngine, tokenPath string) error {
+	fallbackRefreshMutex.Lock()
+	defer fallbackRefreshMutex.Unlock()
+
 	agyPath, err := exec.LookPath("agy")
 	if err != nil {
 		return fmt.Errorf("agy CLI not found in PATH: %w", err)
@@ -178,10 +203,10 @@ func RefreshTokenFallbackAgy(store *storage.StorageEngine, tokenPath string) err
 		return fmt.Errorf("token file does not exist: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	return lock.WithLock(ctx, store.LockFile, config.DefaultLockTimeout, func() error {
+	return lock.WithLock(ctx, store.LockFile, 30*time.Second, func() error {
 		oldData, _ := ReadTokenData(tokenPath)
 		oldAcc := ExtractAccessToken(oldData)
 		oldExp := ExtractExpiry(oldData)
@@ -189,7 +214,23 @@ func RefreshTokenFallbackAgy(store *storage.StorageEngine, tokenPath string) err
 		absTokenPath, _ := filepath.Abs(tokenPath)
 		absLiveToken, _ := filepath.Abs(store.LiveToken)
 
-		if absTokenPath == absLiveToken {
+		isActiveProfile := false
+		if state, err := store.LoadState(); err == nil && state.Active != nil {
+			activeVault := filepath.Join(store.AccountsDir, *state.Active, "antigravity-oauth-token")
+			absActiveVault, _ := filepath.Abs(activeVault)
+			if absTokenPath == absActiveVault || absTokenPath == absLiveToken {
+				isActiveProfile = true
+			}
+		}
+
+		if isActiveProfile {
+			if absTokenPath != absLiveToken {
+				tmpLive := filepath.Join(filepath.Dir(store.LiveToken), fmt.Sprintf(".tmp_live_%d", os.Getpid()))
+				if err := copyFile(tokenPath, tmpLive); err == nil {
+					_ = os.Rename(tmpLive, store.LiveToken)
+				}
+			}
+
 			cmd := exec.CommandContext(ctx, agyPath, "models")
 			_ = cmd.Run()
 
@@ -197,6 +238,12 @@ func RefreshTokenFallbackAgy(store *storage.StorageEngine, tokenPath string) err
 			newAcc := ExtractAccessToken(newData)
 			newExp := ExtractExpiry(newData)
 			if newAcc != "" && (oldAcc == "" || newAcc != oldAcc || newExp != oldExp) {
+				if absTokenPath != absLiveToken {
+					tmpVault := tokenPath + fmt.Sprintf(".tmp_%d", os.Getpid())
+					if err := copyFile(store.LiveToken, tmpVault); err == nil {
+						_ = os.Rename(tmpVault, tokenPath)
+					}
+				}
 				return nil
 			}
 			return errors.New("headless agy execution did not renew live token")

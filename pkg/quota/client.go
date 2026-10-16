@@ -193,8 +193,17 @@ func (c *QuotaClient) GetQuota(projectID string) (*models.QuotaSummary, error) {
 
 			var remVal float64 = 1.0
 			if rem, exists := bucketMap["remainingFraction"]; exists {
-				if num, ok := rem.(float64); ok {
-					remVal = num
+				switch v := rem.(type) {
+				case float64:
+					remVal = v
+				case int:
+					remVal = float64(v)
+				case int64:
+					remVal = float64(v)
+				case json.Number:
+					if f, err := v.Float64(); err == nil {
+						remVal = f
+					}
 				}
 			}
 

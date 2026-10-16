@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"text/tabwriter"
 	"time"
 
@@ -52,6 +53,12 @@ func newListCmd() *cobra.Command {
 				return nil
 			}
 
+			accountNames := make([]string, 0, len(state.Accounts))
+			for name := range state.Accounts {
+				accountNames = append(accountNames, name)
+			}
+			sort.Strings(accountNames)
+
 			now := time.Now().UTC()
 			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "  PROFILE\tSTATUS\tLAST USED\tEMAIL\tPLAN")
@@ -61,13 +68,15 @@ func newListCmd() *cobra.Command {
 				activeName = *state.Active
 			}
 
-			for name, acct := range state.Accounts {
+			for _, name := range accountNames {
+				acct := state.Accounts[name]
 				prefix := " "
+				st := acct.State(now)
 				if name == activeName {
-					prefix = color.GreenString("*")
+					prefix = "*"
+					st = models.StateActive
 				}
 
-				st := acct.State(now)
 				statusStr := string(st)
 				switch st {
 				case models.StateActive, models.StateStandby:
