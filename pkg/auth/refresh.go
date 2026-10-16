@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,11 +9,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/alirezaopmc/promux/pkg/config"
+	"github.com/alirezaopmc/promux/pkg/lock"
 	"github.com/alirezaopmc/promux/pkg/storage"
 )
 
@@ -142,12 +145,15 @@ func RefreshAccountToken(store *storage.StorageEngine, accountName string, force
 		return false, nil // Not expired, no refresh needed
 	}
 
-	_, revoked, err := RefreshTokenNative(tokenPath, data)
+	_, revoked, nativeErr := RefreshTokenNative(tokenPath, data)
 	if revoked {
 		return false, ErrTokenRevoked
 	}
-	if err != nil {
-		return false, err
+	if nativeErr != nil {
+		// Tier 2 fallback: renew via headless agy CLI under storage file lock
+		if fallbackErr := RefreshTokenFallbackAgy(store, tokenPath); fallbackErr != nil {
+			return false, fmt.Errorf("native refresh failed (%v); fallback refresh failed: %w", nativeErr, fallbackErr)
+		}
 	}
 
 	// If active, sync between live and vault
@@ -160,4 +166,108 @@ func RefreshAccountToken(store *storage.StorageEngine, accountName string, force
 	}
 
 	return true, nil
+}
+
+func RefreshTokenFallbackAgy(store *storage.StorageEngine, tokenPath string) error {
+	agyPath, err := exec.LookPath("agy")
+	if err != nil {
+		return fmt.Errorf("agy CLI not found in PATH: %w", err)
+	}
+
+	if _, err := os.Stat(tokenPath); err != nil {
+		return fmt.Errorf("token file does not exist: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	return lock.WithLock(ctx, store.LockFile, config.DefaultLockTimeout, func() error {
+		oldData, _ := ReadTokenData(tokenPath)
+		oldAcc := ExtractAccessToken(oldData)
+		oldExp := ExtractExpiry(oldData)
+
+		absTokenPath, _ := filepath.Abs(tokenPath)
+		absLiveToken, _ := filepath.Abs(store.LiveToken)
+
+		if absTokenPath == absLiveToken {
+			cmd := exec.CommandContext(ctx, agyPath, "models")
+			_ = cmd.Run()
+
+			newData, _ := ReadTokenData(store.LiveToken)
+			newAcc := ExtractAccessToken(newData)
+			newExp := ExtractExpiry(newData)
+			if newAcc != "" && (oldAcc == "" || newAcc != oldAcc || newExp != oldExp) {
+				return nil
+			}
+			return errors.New("headless agy execution did not renew live token")
+		}
+
+		_ = os.MkdirAll(filepath.Dir(store.LiveToken), 0755)
+		backupPath := store.LiveToken + fmt.Sprintf(".fallback_bak_%d", os.Getpid())
+		liveExisted := false
+		if _, err := os.Stat(store.LiveToken); err == nil {
+			liveExisted = true
+			if err := copyFile(store.LiveToken, backupPath); err != nil {
+				return fmt.Errorf("failed to backup live token: %w", err)
+			}
+		}
+
+		defer func() {
+			if liveExisted {
+				_ = os.Rename(backupPath, store.LiveToken)
+			} else {
+				_ = os.Remove(store.LiveToken)
+				_ = os.Remove(backupPath)
+			}
+		}()
+
+		// Copy tokenPath into liveToken
+		tmpLive := filepath.Join(filepath.Dir(store.LiveToken), fmt.Sprintf(".tmp_live_%d", os.Getpid()))
+		if err := copyFile(tokenPath, tmpLive); err != nil {
+			return fmt.Errorf("failed to copy token to temp live: %w", err)
+		}
+		if err := os.Rename(tmpLive, store.LiveToken); err != nil {
+			return fmt.Errorf("failed to stage live token: %w", err)
+		}
+
+		// Run headless agy
+		cmd := exec.CommandContext(ctx, agyPath, "models")
+		_ = cmd.Run()
+
+		newData, err := ReadTokenData(store.LiveToken)
+		if err != nil {
+			return fmt.Errorf("failed to read renewed live token: %w", err)
+		}
+		newAcc := ExtractAccessToken(newData)
+		newExp := ExtractExpiry(newData)
+		if newAcc == "" || (newAcc == oldAcc && newExp == oldExp) {
+			return errors.New("headless agy execution did not renew token")
+		}
+
+		// Copy renewed token back to tokenPath
+		tmpVault := tokenPath + fmt.Sprintf(".tmp_%d", os.Getpid())
+		if err := copyFile(store.LiveToken, tmpVault); err != nil {
+			return fmt.Errorf("failed to save renewed token: %w", err)
+		}
+		return os.Rename(tmpVault, tokenPath)
+	})
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
 }

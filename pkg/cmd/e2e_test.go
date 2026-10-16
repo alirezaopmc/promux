@@ -554,6 +554,64 @@ func TestE2E_CLIQuota(t *testing.T) {
 			t.Fatalf("expected output for secondary-user, got: %q", out)
 		}
 	})
+
+	t.Run("quota --all overview table and json", func(t *testing.T) {
+		// Test standard table output with --all
+		out, err := executeCommand("quota", "--all")
+		if err != nil {
+			t.Fatalf("quota --all failed: %v", err)
+		}
+		if !strings.Contains(out, "PROFILE") || !strings.Contains(out, "GEMINI (5H)") {
+			t.Fatalf("unexpected quota --all header: %s", out)
+		}
+		if !strings.Contains(out, "main-user") || !strings.Contains(out, "secondary-user") {
+			t.Fatalf("expected both accounts in quota --all output: %s", out)
+		}
+
+		// Test positional 'all' argument
+		out, err = executeCommand("quota", "all")
+		if err != nil {
+			t.Fatalf("quota all failed: %v", err)
+		}
+		if !strings.Contains(out, "main-user") {
+			t.Fatalf("expected main-user in 'quota all' output: %s", out)
+		}
+
+		// Test JSON array output with --all --json
+		out, err = executeCommand("quota", "--all", "--json")
+		if err != nil {
+			t.Fatalf("quota --all --json failed: %v", err)
+		}
+		var records []AccountQuotaRecord
+		if err := json.Unmarshal([]byte(out), &records); err != nil {
+			t.Fatalf("failed to unmarshal quota --all JSON: %v (raw: %q)", err, out)
+		}
+		if len(records) < 2 {
+			t.Fatalf("expected at least 2 account records, got %d", len(records))
+		}
+		foundMain := false
+		foundSec := false
+		for _, r := range records {
+			if r.Account == "main-user" {
+				foundMain = true
+				if !r.Active {
+					t.Fatalf("expected main-user to be active")
+				}
+				if r.Gemini == nil || r.Gemini.Remaining5h != 0.85 {
+					t.Fatalf("unexpected gemini remaining: %+v", r.Gemini)
+				}
+			}
+			if r.Account == "secondary-user" {
+				foundSec = true
+				if r.Active {
+					t.Fatalf("expected secondary-user to not be active")
+				}
+			}
+		}
+		if !foundMain || !foundSec {
+			t.Fatalf("missing accounts in records: %+v", records)
+		}
+	})
 }
 
 // -----------------------------------------------------------------------------
