@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-10-16
+
+### Added
+- Complete Go native rewrite with single-binary distribution and zero runtime dependencies.
+- Autonomous PTY command runner (`promux run <command>`) with real-time log scanning and automatic keystroke injection upon quota failover.
+- Multi-profile quota overview table (`promux quota --all` / `promux quota all`) with ANSI-aware table alignment and right-aligned percentages.
+- Cross-platform process-aware advisory file locking (`pkg/lock`).
+- High-performance OAuth token parser, native Google OAuth refresh, and headless `agy` fallback (`pkg/auth`).
+- Thread-safe and atomic vault storage with reentrant transaction rollbacks (`pkg/storage`).
+- Real-time log watcher daemon with reactive failover and adaptive backoff (`promux watch`, `pkg/watcher`).
+- Multi-platform GitHub Actions matrix workflow (Linux, macOS, Windows) and Go E2E test suite.
+
 ## [0.4.0] - 2026-10-06
 
 ### Added
