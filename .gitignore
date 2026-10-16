@@ -6,6 +6,7 @@ __pycache__/
 # Distribution / packaging
 dist/
 build/
+bin/
 *.egg-info/
 .eggs/
 src/promux/_version.py
