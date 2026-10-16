@@ -3,7 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"time"
 
@@ -27,6 +27,7 @@ func newQuotaCmd() *cobra.Command {
 		Short: "Inspect Cloud Code Assist quota and reset countdowns",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store := GetStorage()
+			out := cmd.OutOrStdout()
 
 			targetName := accountName
 			if targetName == "" {
@@ -44,9 +45,9 @@ func newQuotaCmd() *cobra.Command {
 			if !force {
 				if cached, ok := cache.Get(targetName); ok {
 					if JSONOut {
-						return json.NewEncoder(os.Stdout).Encode(cached)
+						return json.NewEncoder(out).Encode(cached)
 					}
-					printQuota(targetName, cached)
+					printQuota(out, targetName, cached)
 					return nil
 				}
 			}
@@ -99,10 +100,10 @@ func newQuotaCmd() *cobra.Command {
 			_ = cache.Set(targetName, qs)
 
 			if JSONOut {
-				return json.NewEncoder(os.Stdout).Encode(qs)
+				return json.NewEncoder(out).Encode(qs)
 			}
 
-			printQuota(targetName, qs)
+			printQuota(out, targetName, qs)
 			return nil
 		},
 	}
@@ -113,8 +114,8 @@ func newQuotaCmd() *cobra.Command {
 	return cmd
 }
 
-func printQuota(name string, qs *models.QuotaSummary) {
-	fmt.Printf("Quota Summary for Profile: %s\n\n", color.CyanString(name))
+func printQuota(w io.Writer, name string, qs *models.QuotaSummary) {
+	fmt.Fprintf(w, "Quota Summary for Profile: %s\n\n", color.CyanString(name))
 
 	now := time.Now().UTC()
 
@@ -136,13 +137,13 @@ func printQuota(name string, qs *models.QuotaSummary) {
 		return pct
 	}
 
-	fmt.Println("Gemini Models:")
-	fmt.Printf("  • 5-Hour Window: %s\n", formatWindow(qs.Gemini5hRemaining, qs.Gemini5hReset))
-	fmt.Printf("  • Weekly Window: %s\n\n", formatWindow(qs.GeminiWeeklyRemaining, qs.GeminiWeeklyReset))
+	fmt.Fprintln(w, "Gemini Models:")
+	fmt.Fprintf(w, "  • 5-Hour Window: %s\n", formatWindow(qs.Gemini5hRemaining, qs.Gemini5hReset))
+	fmt.Fprintf(w, "  • Weekly Window: %s\n\n", formatWindow(qs.GeminiWeeklyRemaining, qs.GeminiWeeklyReset))
 
-	fmt.Println("Third-Party Models:")
-	fmt.Printf("  • 5-Hour Window: %s\n", formatWindow(qs.ThirdParty5hRemaining, qs.ThirdParty5hReset))
-	fmt.Printf("  • Weekly Window: %s\n", formatWindow(qs.ThirdPartyWeeklyRemaining, qs.ThirdPartyWeeklyReset))
+	fmt.Fprintln(w, "Third-Party Models:")
+	fmt.Fprintf(w, "  • 5-Hour Window: %s\n", formatWindow(qs.ThirdParty5hRemaining, qs.ThirdParty5hReset))
+	fmt.Fprintf(w, "  • Weekly Window: %s\n", formatWindow(qs.ThirdPartyWeeklyRemaining, qs.ThirdPartyWeeklyReset))
 }
 
 func newRefreshCmd() *cobra.Command {
@@ -173,10 +174,11 @@ func newRefreshCmd() *cobra.Command {
 				return err
 			}
 
+			out := cmd.OutOrStdout()
 			if refreshed {
-				fmt.Printf("✓ Successfully refreshed OAuth credentials for '%s'\n", targetName)
+				fmt.Fprintf(out, "✓ Successfully refreshed OAuth credentials for '%s'\n", targetName)
 			} else {
-				fmt.Printf("• Credentials for '%s' are still valid (use --force to renew now)\n", targetName)
+				fmt.Fprintf(out, "• Credentials for '%s' are still valid (use --force to renew now)\n", targetName)
 			}
 			return nil
 		},

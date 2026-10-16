@@ -4,10 +4,34 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
+var testCLIMu sync.Mutex
+
+func resetCmdFlags(c *cobra.Command) {
+	c.Flags().VisitAll(func(f *pflag.Flag) {
+		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
+	})
+	for _, child := range c.Commands() {
+		resetCmdFlags(child)
+	}
+}
+
 func executeCommand(args ...string) (string, error) {
+	testCLIMu.Lock()
+	defer testCLIMu.Unlock()
+
+	resetCmdFlags(RootCmd)
+	ToolName = "agy"
+	JSONOut = false
+	DebugMode = false
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)

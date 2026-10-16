@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"text/tabwriter"
 	"time"
 
@@ -41,19 +40,20 @@ func newListCmd() *cobra.Command {
 				return err
 			}
 
+			out := cmd.OutOrStdout()
 			if JSONOut {
-				enc := json.NewEncoder(os.Stdout)
+				enc := json.NewEncoder(out)
 				enc.SetIndent("", "  ")
 				return enc.Encode(state)
 			}
 
 			if len(state.Accounts) == 0 {
-				fmt.Println("No profiles saved. Use 'promux save <name>' to save current session.")
+				fmt.Fprintln(out, "No profiles saved. Use 'promux save <name>' to save current session.")
 				return nil
 			}
 
 			now := time.Now().UTC()
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "  PROFILE\tSTATUS\tLAST USED\tEMAIL\tPLAN")
 
 			activeName := ""
@@ -123,11 +123,12 @@ func newSaveCmd() *cobra.Command {
 				return err
 			}
 
+			out := cmd.OutOrStdout()
 			if JSONOut {
-				return json.NewEncoder(os.Stdout).Encode(acct)
+				return json.NewEncoder(out).Encode(acct)
 			}
 
-			fmt.Printf("✓ Saved profile '%s' successfully\n", name)
+			fmt.Fprintf(out, "✓ Saved profile '%s' successfully\n", name)
 			return nil
 		},
 	}
@@ -152,11 +153,12 @@ func newSwitchCmd() *cobra.Command {
 				return err
 			}
 
+			out := cmd.OutOrStdout()
 			if JSONOut {
-				return json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "switched", "active": name})
+				return json.NewEncoder(out).Encode(map[string]any{"status": "switched", "active": name})
 			}
 
-			fmt.Printf("✓ Switched active profile to '%s'\n", name)
+			fmt.Fprintf(out, "✓ Switched active profile to '%s'\n", name)
 			return nil
 		},
 	}
@@ -180,12 +182,13 @@ func newNextCmd() *cobra.Command {
 				return err
 			}
 
+			out := cmd.OutOrStdout()
 			if JSONOut {
-				return json.NewEncoder(os.Stdout).Encode(res)
+				return json.NewEncoder(out).Encode(res)
 			}
 
 			if !res.Success {
-				fmt.Printf("✗ Rotation failed: %s\n", res.Reason)
+				fmt.Fprintf(out, "✗ Rotation failed: %s\n", res.Reason)
 				return nil
 			}
 
@@ -198,7 +201,7 @@ func newNextCmd() *cobra.Command {
 				to = *res.ToAccount
 			}
 
-			fmt.Printf("✓ Rotated profile: %s -> %s (cooldown: %dm)\n", from, to, cooldown)
+			fmt.Fprintf(out, "✓ Rotated profile: %s -> %s (cooldown: %dm)\n", from, to, cooldown)
 			return nil
 		},
 	}
@@ -220,16 +223,17 @@ func newWhoamiCmd() *cobra.Command {
 				return err
 			}
 
+			out := cmd.OutOrStdout()
 			if acct == nil {
 				if JSONOut {
-					return json.NewEncoder(os.Stdout).Encode(map[string]any{"active": nil})
+					return json.NewEncoder(out).Encode(map[string]any{"active": nil})
 				}
-				fmt.Println("No active profile set.")
+				fmt.Fprintln(out, "No active profile set.")
 				return nil
 			}
 
 			if JSONOut {
-				return json.NewEncoder(os.Stdout).Encode(acct)
+				return json.NewEncoder(out).Encode(acct)
 			}
 
 			email := "-"
@@ -237,9 +241,9 @@ func newWhoamiCmd() *cobra.Command {
 				email = *acct.Email
 			}
 
-			fmt.Printf("Active Profile: %s\n", color.GreenString(acct.Name))
-			fmt.Printf("Email:          %s\n", email)
-			fmt.Printf("Plan:           %s\n", acct.PlanType)
+			fmt.Fprintf(out, "Active Profile: %s\n", color.GreenString(acct.Name))
+			fmt.Fprintf(out, "Email:          %s\n", email)
+			fmt.Fprintf(out, "Plan:           %s\n", acct.PlanType)
 			return nil
 		},
 	}
@@ -258,11 +262,12 @@ func newRemoveCmd() *cobra.Command {
 				return err
 			}
 
+			out := cmd.OutOrStdout()
 			if JSONOut {
-				return json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "removed", "account": name})
+				return json.NewEncoder(out).Encode(map[string]any{"status": "removed", "account": name})
 			}
 
-			fmt.Printf("✓ Removed profile '%s'\n", name)
+			fmt.Fprintf(out, "✓ Removed profile '%s'\n", name)
 			return nil
 		},
 	}

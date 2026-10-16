@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"text/tabwriter"
 
 	"github.com/fatih/color"
@@ -49,11 +48,12 @@ func newToolsCmd() *cobra.Command {
 		Use:   "tools [list]",
 		Short: "List supported developer AI CLI tools and capabilities",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
 			if JSONOut {
-				return json.NewEncoder(os.Stdout).Encode(SupportedTools)
+				return json.NewEncoder(out).Encode(SupportedTools)
 			}
 
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "  TOOL\tNAME\tSTATUS\tCAPABILITIES")
 
 			for _, t := range SupportedTools {

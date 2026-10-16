@@ -1,0 +1,62 @@
+name: Go CI
+
+on:
+  push:
+    branches: [main, feat/go-core]
+  pull_request:
+    branches: [main, feat/go-core]
+
+jobs:
+  test:
+    name: Go ${{ matrix.go-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go-version: ['1.24', '1.25', '1.26']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          check-latest: false
+
+      - name: Verify Go environment
+        run: go version
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run Go tests with race detector (Linux & macOS)
+        if: runner.os != 'Windows'
+        run: go test -v -race ./...
+
+      - name: Run Go tests (Windows)
+        if: runner.os == 'Windows'
+        run: go test -v ./...
+
+      - name: Cross-compile build verification
+        shell: bash
+        run: |
+          mkdir -p build_test
+          targets=(
+            "linux/amd64"
+            "linux/arm64"
+            "darwin/amd64"
+            "darwin/arm64"
+            "windows/amd64"
+          )
+          for target in "${targets[@]}"; do
+            GOOS="${target%/*}"
+            GOARCH="${target#*/}"
+            echo "==> Cross-compiling for ${GOOS}/${GOARCH}..."
+            EXT=""
+            if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -ldflags="-s -w" -o "build_test/promux-${GOOS}-${GOARCH}${EXT}" ./cmd/promux
+          done
+          rm -rf build_test
