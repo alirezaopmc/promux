@@ -1,4 +1,5 @@
 import json
+import sys
 import threading
 import time
 from typing import Any
@@ -1005,7 +1006,8 @@ def test_native_refresh_updates_refresh_token_if_provided(tmp_path, monkeypatch)
     assert saved["token"]["access_token"] == "new_acc"
     assert saved["token"]["refresh_token"] == "rotated_refresh"
     assert saved["auth_method"] == "consumer"
-    assert (token_path.stat().st_mode & 0o777) == 0o600
+    if sys.platform != "win32":
+        assert (token_path.stat().st_mode & 0o777) == 0o600
 
 
 def test_native_refresh_keeps_existing_refresh_token_if_not_in_response(tmp_path, monkeypatch):
@@ -1548,7 +1550,8 @@ def test_atomic_copy_token_permissions_and_atomicity(tmp_path):
     _atomic_copy_token(src, dst)
     assert dst.exists()
     assert dst.read_text() == "token_content"
-    assert oct(dst.stat().st_mode & 0o777) == oct(0o600)
+    if sys.platform != "win32":
+        assert oct(dst.stat().st_mode & 0o777) == oct(0o600)
 
 
 def test_refresh_account_token_direct(tmp_path, sample_token_dict, monkeypatch):

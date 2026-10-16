@@ -1,4 +1,5 @@
 import json
+import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -131,7 +132,8 @@ def test_cache_file_permissions(tmp_path: Path):
     cache.set("acct1", qs)
     cache_file = tmp_path / "cache" / "quota.json"
     assert cache_file.exists()
-    assert cache_file.stat().st_mode & 0o777 == 0o600
+    if sys.platform != "win32":
+        assert cache_file.stat().st_mode & 0o777 == 0o600
 
 
 def test_cache_corrupt_cache_file_handled(tmp_path: Path):

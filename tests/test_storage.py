@@ -1,4 +1,5 @@
 import json
+import sys
 import threading
 import time
 
@@ -27,11 +28,9 @@ def test_save_and_switch_profile(tmp_path, sample_token_dict):
     # Verify vault copy has 0600 permissions
     vault_token = promux_home / "accounts" / "work" / "antigravity-oauth-token"
     assert vault_token.exists()
-    assert oct(vault_token.stat().st_mode & 0o777) == "0o600"
-
-    # Verify state.json exists and has 0600 permissions
-    assert storage.state_file.exists()
-    assert oct(storage.state_file.stat().st_mode & 0o777) == "0o600"
+    if sys.platform != "win32":
+        assert oct(vault_token.stat().st_mode & 0o777) == "0o600"
+        assert oct(storage.state_file.stat().st_mode & 0o777) == "0o600"
 
     # Save personal profile with different token
     personal_token_data = dict(sample_token_dict)
@@ -45,7 +44,8 @@ def test_save_and_switch_profile(tmp_path, sample_token_dict):
     assert storage.get_active_profile() == "work"
     active_data = json.loads(live_token.read_text())
     assert active_data["token"]["access_token"] == "ya29.mock_access_token"
-    assert oct(live_token.stat().st_mode & 0o777) == "0o600"
+    if sys.platform != "win32":
+        assert oct(live_token.stat().st_mode & 0o777) == "0o600"
 
 
 def test_remove_profile(tmp_path, sample_token_dict):
@@ -181,7 +181,8 @@ def test_save_state_under_lock(tmp_path):
 
     loaded = storage.load_state()
     assert loaded == custom_state
-    assert oct(storage.state_file.stat().st_mode & 0o777) == "0o600"
+    if sys.platform != "win32":
+        assert oct(storage.state_file.stat().st_mode & 0o777) == "0o600"
 
 
 def test_switch_profile_syncs_outgoing_live_token(tmp_path, sample_token_dict):
@@ -224,12 +225,14 @@ def test_switch_profile_syncs_outgoing_live_token(tmp_path, sample_token_dict):
     vault1 = promux_home / "accounts" / "acc1" / "antigravity-oauth-token"
     vault1_data = json.loads(vault1.read_text())
     assert vault1_data["token"]["access_token"] == "token_acc1_refreshed"
-    assert oct(vault1.stat().st_mode & 0o777) == "0o600"
+    if sys.platform != "win32":
+        assert oct(vault1.stat().st_mode & 0o777) == "0o600"
 
     # And live token is now acc2's token
     live_data = json.loads(live_token.read_text())
     assert live_data["token"]["access_token"] == "token_acc2_v1"
-    assert oct(live_token.stat().st_mode & 0o777) == "0o600"
+    if sys.platform != "win32":
+        assert oct(live_token.stat().st_mode & 0o777) == "0o600"
 
     # Simulate agy refreshing the live token for acc2 while active
     token2_refreshed = dict(sample_token_dict)
@@ -245,7 +248,8 @@ def test_switch_profile_syncs_outgoing_live_token(tmp_path, sample_token_dict):
     vault2 = promux_home / "accounts" / "acc2" / "antigravity-oauth-token"
     vault2_data = json.loads(vault2.read_text())
     assert vault2_data["token"]["access_token"] == "token_acc2_refreshed"
-    assert oct(vault2.stat().st_mode & 0o777) == "0o600"
+    if sys.platform != "win32":
+        assert oct(vault2.stat().st_mode & 0o777) == "0o600"
 
     # And live token is now acc1's token
     live_data_2 = json.loads(live_token.read_text())
