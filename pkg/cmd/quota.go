@@ -49,7 +49,23 @@ func newQuotaCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "quota [account]",
 		Short: "Inspect Cloud Code Assist quota and reset countdowns",
-		Args:  cobra.MaximumNArgs(1),
+		Example: `  # Check active profile quota
+  promux quota
+
+  # List all vaulted account quotas together in an overview table
+  promux quota --all
+  promux quota all
+
+  # Check quota for a specific profile
+  promux quota personal
+  promux quota --account personal
+
+  # Bypass local cache and query Google APIs live
+  promux quota --all --refresh
+
+  # Export all quotas as machine-readable JSON
+  promux quota --all --json`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store := GetStorage()
 			out := cmd.OutOrStdout()

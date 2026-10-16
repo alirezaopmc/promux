@@ -340,6 +340,31 @@ promux whoami
 promux whoami --json
 ```
 
+### `promux quota [account]`
+Inspects Cloud Code Assist quota limits and rolling window reset countdowns. When queried without an argument, checks the active profile; when queried with `--all`, lists all vaulted accounts in a concurrent overview table.
+- `-A, --all`: Query and display quota for all accounts in the vault concurrently.
+- `-a, --account <name>`: Target a specific account profile.
+- `-r, --refresh`: Bypass the local quota cache and query Google Cloud Code Assist live.
+- `--json`: Output machine-readable JSON (single object or array of all accounts).
+
+```bash
+# Check active profile quota
+promux quota
+
+# List all account quotas together in an overview table
+promux quota --all
+promux quota all
+
+# Check quota for a specific profile
+promux quota personal
+
+# Bypass local cache and force live inspection
+promux quota --all --refresh
+
+# Export all quotas as JSON
+promux quota --all --json
+```
+
 ### `promux refresh [account]`
 Forces renewal of OAuth credentials for the active or specified profile using native OAuth token endpoints.
 - `-f, --force`: Force refresh even if the token has not reached its expiry buffer.
