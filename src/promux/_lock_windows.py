@@ -48,7 +48,6 @@ if sys.platform == "win32":
         wintypes.DWORD,
         wintypes.DWORD,
         wintypes.DWORD,
-        wintypes.DWORD,
         ctypes.POINTER(_OVERLAPPED),
     ]
     _UnlockFileEx.restype = wintypes.BOOL
