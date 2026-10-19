@@ -32,7 +32,7 @@ var runAgyPrime = func(ctx context.Context) error {
 		return fmt.Errorf("agy CLI not found in PATH: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, agyPath, "--model", "gemini-2.5-flash", "--effort", "low", "-p", "ping", "--disable-slash-commands")
+	cmd := exec.CommandContext(ctx, agyPath, "-p", "ping", "--disable-slash-commands")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("agy command failed: %w (output: %s)", err, strings.TrimSpace(string(out)))

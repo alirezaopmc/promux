@@ -108,10 +108,6 @@ def _run_agy_prime(timeout: float = 20.0) -> None:
     proc = subprocess.run(
         [
             agy_path,
-            "--model",
-            "gemini-2.5-flash",
-            "--effort",
-            "low",
             "-p",
             "ping",
             "--disable-slash-commands",
