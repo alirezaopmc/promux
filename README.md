@@ -22,6 +22,7 @@ Operating as a zero-intrusion filesystem overlay, `promux` keeps your active con
 - **Autonomous PTY Runner (`promux run`):** Spawns your AI CLI tool inside an interactive pseudo-terminal, scans terminal output in real time for quota limits (`429 RESOURCE_EXHAUSTED`, `Individual quota reached`), atomically hot-swaps to an eligible standby profile, and automatically injects `'continue'` keystrokes so work resumes without human intervention.
 - **Multi-Tool Profile Management:** Unified profile vault architecture managing credentials across Antigravity CLI (`agy`), Claude Code (`claude`), Codex CLI (`codex`), and Cursor CLI (`cursor`).
 - **Quota-Aware Monitoring:** Direct REST client queries to Google Cloud Code Assist (`/v1internal:retrieveUserQuotaSummary`) calculating 5-hour and weekly remaining quotas with live, color-coded relative countdowns (`98.0% (resets in 2h 15m left)`).
+- **Weekly Quota Priming Engine (`promux prime`):** Eliminates Google's "floating reset delay" by detecting accounts that reached weekly reset and executing a minimal headless prompt turn under lock to fix the next 7-day countdown (`promux prime`, `promux quota --all --prime`, and `promux watch --auto-prime`).
 - **Cross-Platform Support (Linux, macOS, Windows):** Native OS-level advisory file locking (`syscall.Flock` on POSIX, `LockFileEx` on Windows) and platform-specific terminal handling.
 - **Shared Workspace & Conversation Continuity:** Workspace sessions, conversation history, and cached project state remain 100% intact across profile rotations.
 - **Dual-Loop Failover Protection:**
@@ -69,6 +70,28 @@ When a quota wall is encountered during long-running tasks, `promux run`:
 4. Your CLI session seamlessly continues generating code without dropping context or requiring you to restart!
 
 *To disable automated keystroke injection, pass the `--no-auto-continue` flag.*
+
+---
+
+## 🔄 Weekly Quota Priming Strategy
+
+Google Antigravity CLI (`agy`) and Google Cloud Code Assist enforce two rolling quota tiers:
+1. **5-Hour Rolling Window:** High-frequency prompt limit refreshed continuously every 5 hours.
+2. **Weekly Rolling Window:** 7-day (168-hour) quota allocation for larger model capacity.
+
+### The Problem: Floating Reset Delay
+When an account's weekly quota period elapses, the quota capacity returns to 100%. However, Google's backend **does not start the next 7-day reset countdown until that account sends its first new prompt turn**.
+
+If a standby profile resets on Monday but sits unused until Wednesday, its next reset countdown doesn't begin until Wednesday—effectively wasting 2 full days of reset cycle interval. Across multiple accounts, this causes significant quota cycle loss over time.
+
+### The Solution: Automated & On-Demand Priming
+Promux introduces **Quota Priming**:
+- **Automatic Detection:** Identifies accounts whose weekly reset timestamp has elapsed, or whose quota is floating at 100% capacity without an active countdown.
+- **Minimal Headless Turn:** Safely activates the account by dispatching a minimal prompt turn (`agy -p "ping" --model gemini-2.5-flash`) under advisory lock (`manager.lock`).
+- **Instant Reset Pinning:** Immediately locks in the new 7-day countdown (`6d 23h`) without human intervention or token waste.
+- **Fail-Safe Token Swapping:** If priming an inactive standby profile, Promux creates a temporary backup of the active live token, swaps in the target vault token, executes the turn, syncs back updated tokens, and guarantees atomic rollback to the original active token upon completion or error.
+
+Priming can be triggered on demand via `promux prime`, during quota inspection via `promux quota --all --prime`, or continuously in the background using `promux watch --auto-prime`.
 
 ---
 
@@ -282,16 +305,27 @@ promux run agy --resume
 promux run -t claude claude
 ```
 
-### `promux quota [account]`
-Queries live Google Cloud Code Assist API quotas for 5-hour and weekly windows.
-- `-a, --account <name>`: Inspect quota for a specific profile (defaults to active).
-- `-r, --refresh`: Bypass cache and force a live API inspection.
-- `--json`: Output machine-readable JSON summary.
+### `promux prime [account]`
+Primes weekly quota reset countdowns by detecting accounts whose weekly quota has reset (or is floating at 100% capacity) and executing a minimal headless prompt turn under lock to fix the new 7-day reset countdown.
+- `-n, --dry-run`: Check eligibility and list accounts without sending prompt tokens.
+- `-f, --force`: Force priming even if an active countdown is already ticking.
+- `--json`: Output machine-readable JSON records.
 
 ```bash
-promux quota
-promux quota backup1
-promux quota -r --json
+# Prime all eligible vaulted profiles that have reset or have floating quota
+promux prime
+
+# Check which profiles are eligible without sending tokens
+promux prime --dry-run
+
+# Prime a specific profile
+promux prime personal
+
+# Force priming regardless of countdown status
+promux prime personal --force
+
+# Machine-readable JSON output
+promux prime --json
 ```
 
 ### `promux list`
@@ -344,6 +378,7 @@ promux whoami --json
 Inspects Cloud Code Assist quota limits and rolling window reset countdowns. When queried without an argument, checks the active profile; when queried with `--all`, lists all vaulted accounts in a concurrent overview table.
 - `-A, --all`: Query and display quota for all accounts in the vault concurrently.
 - `-a, --account <name>`: Target a specific account profile.
+- `-p, --prime`: Prime accounts that have reset weekly quota before displaying.
 - `-r, --refresh`: Bypass the local quota cache and query Google Cloud Code Assist live.
 - `--json`: Output machine-readable JSON (single object or array of all accounts).
 
@@ -361,6 +396,12 @@ promux quota personal
 # Bypass local cache and force live inspection
 promux quota --all --refresh
 
+# Prime eligible profiles and display updated quota overview
+promux quota --all --prime
+
+# Prime and check quota for a specific profile
+promux quota personal --prime
+
 # Export all quotas as JSON
 promux quota --all --json
 ```
@@ -375,10 +416,14 @@ promux refresh backup1 --force
 ```
 
 ### `promux watch`
-Starts the real-time background log watcher daemon in the foreground, tailing log files for quota errors and executing instant hot failovers.
+Starts the real-time background log watcher daemon in the foreground, tailing log files for quota errors, proactively renewing expiring OAuth tokens, and executing instant hot failovers.
+- `--auto-prime`: Automatically prime weekly quota resets in the background as soon as their reset timestamp passes or floating capacity is detected.
 
 ```bash
 promux watch
+
+# Start watcher with background weekly quota auto-priming
+promux watch --auto-prime
 ```
 
 ### `promux tools [list]`
@@ -458,7 +503,8 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/promux watch
+# Pass --auto-prime to automatically prime weekly quota resets in the background
+ExecStart=%h/.local/bin/promux watch --auto-prime
 Restart=always
 RestartSec=5
 StandardOutput=journal
