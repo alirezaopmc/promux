@@ -70,16 +70,30 @@ def is_eligible_for_prime(
     if qs is None:
         return False, "no quota data"
 
-    if qs.gemini_weekly_reset:
-        reset_dt = parse_iso_utc(qs.gemini_weekly_reset)
-        if reset_dt is not None:
-            curr = now or datetime.now(timezone.utc)
-            if curr.tzinfo is None:
-                curr = curr.replace(tzinfo=timezone.utc)
-            if reset_dt <= curr:
-                return True, "weekly reset reached"
-            dur = format_relative_countdown(qs.gemini_weekly_reset, now=curr)
-            return False, f"active countdown ({dur} left)"
+    curr = now or datetime.now(timezone.utc)
+    if curr.tzinfo is None:
+        curr = curr.replace(tzinfo=timezone.utc)
+
+    def check_reset(rst_str: str | None) -> tuple[bool, bool, str]:
+        if rst_str:
+            dt = parse_iso_utc(rst_str)
+            if dt is not None:
+                if dt > curr:
+                    dur = format_relative_countdown(rst_str, now=curr)
+                    return True, False, dur
+                return False, True, ""
+        return False, False, ""
+
+    gem_active, gem_expired, gem_dur = check_reset(qs.gemini_weekly_reset)
+    tp_active, tp_expired, tp_dur = check_reset(qs.third_party_weekly_reset)
+
+    if gem_active:
+        return False, f"active countdown ({gem_dur} left)"
+    if tp_active:
+        return False, f"active countdown ({tp_dur} left)"
+
+    if gem_expired or tp_expired:
+        return True, "weekly reset reached"
 
     if qs.gemini_weekly_remaining >= 1.0:
         return True, "weekly reset floating at 100%"

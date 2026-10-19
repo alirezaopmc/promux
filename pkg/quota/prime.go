@@ -90,14 +90,30 @@ func IsEligibleForPrime(qs *models.QuotaSummary, now time.Time, force bool) (boo
 		return false, "no quota data"
 	}
 
-	if qs.GeminiWeeklyReset != nil && *qs.GeminiWeeklyReset != "" {
-		resetTime, ok := ParseResetTimestamp(*qs.GeminiWeeklyReset)
-		if ok {
-			if !resetTime.After(now) {
-				return true, "weekly reset reached"
+	checkReset := func(resetStr *string) (hasActive bool, isExpired bool, duration string) {
+		if resetStr != nil && *resetStr != "" {
+			if resetTime, ok := ParseResetTimestamp(*resetStr); ok {
+				if resetTime.After(now) {
+					return true, false, FormatResetDuration(resetTime, now)
+				}
+				return false, true, ""
 			}
-			return false, fmt.Sprintf("active countdown (%s left)", FormatResetDuration(resetTime, now))
 		}
+		return false, false, ""
+	}
+
+	gemActive, gemExpired, gemDur := checkReset(qs.GeminiWeeklyReset)
+	tpActive, tpExpired, tpDur := checkReset(qs.ThirdPartyWeeklyReset)
+
+	if gemActive {
+		return false, fmt.Sprintf("active countdown (%s left)", gemDur)
+	}
+	if tpActive {
+		return false, fmt.Sprintf("active countdown (%s left)", tpDur)
+	}
+
+	if gemExpired || tpExpired {
+		return true, "weekly reset reached"
 	}
 
 	if qs.GeminiWeeklyRemaining >= 1.0 {
