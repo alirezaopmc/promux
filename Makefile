@@ -14,4 +14,4 @@ clean:
 	rm -rf bin/
 
 install: build
-	cp bin/promux $(HOME)/.local/bin/promux
+	install -m 755 bin/promux $(HOME)/.local/bin/promux

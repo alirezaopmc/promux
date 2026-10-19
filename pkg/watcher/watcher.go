@@ -19,23 +19,23 @@ import (
 )
 
 var (
-	primeAllEligible = quota.PrimeAllEligible
+	primeAllEligible = quota.PrimeAllEligibleWithFilter
 	logPrintf        = log.Printf
 )
 
 type LogWatcher struct {
-	Storage      *storage.StorageEngine
-	Failover     *failover.FailoverEngine
-	GeminiHome   string
-	CustomLogs   []string
-	PollInterval time.Duration
-	AutoPrime    bool
-	Cache        *quota.QuotaCache
-	store        *storage.StorageEngine
-	cache        *quota.QuotaCache
-	offsets      map[string]int64
-	inodes       map[string]uint64
-	mu           sync.Mutex
+	Storage       *storage.StorageEngine
+	Failover      *failover.FailoverEngine
+	GeminiHome    string
+	CustomLogs    []string
+	PollInterval  time.Duration
+	PrimeInterval time.Duration
+	AutoPrime     bool
+	Cache         *quota.QuotaCache
+	offsets       map[string]int64
+	inodes        map[string]uint64
+	failedPrimes  map[string]time.Time
+	mu            sync.Mutex
 }
 
 type WatcherEngine = LogWatcher
@@ -49,17 +49,17 @@ func NewLogWatcher(storage *storage.StorageEngine, failover *failover.FailoverEn
 	}
 
 	w := &LogWatcher{
-		Storage:      storage,
-		store:        storage,
-		Failover:     failover,
-		GeminiHome:   geminiHome,
-		PollInterval: 1 * time.Second,
-		offsets:      make(map[string]int64),
-		inodes:       make(map[string]uint64),
+		Storage:       storage,
+		Failover:      failover,
+		GeminiHome:    geminiHome,
+		PollInterval:  1 * time.Second,
+		PrimeInterval: 60 * time.Second,
+		offsets:       make(map[string]int64),
+		inodes:        make(map[string]uint64),
+		failedPrimes:  make(map[string]time.Time),
 	}
 	if storage != nil {
-		w.cache = quota.NewCache(storage.Home)
-		w.Cache = w.cache
+		w.Cache = quota.NewCache(storage.Home)
 	}
 	return w
 }
@@ -223,6 +223,47 @@ func (w *LogWatcher) RunOnce() ([]LogMatch, error) {
 	return matches, nil
 }
 
+func (w *LogWatcher) checkAutoPrime(ctx context.Context) {
+	if !w.AutoPrime || w.Storage == nil {
+		return
+	}
+
+	if w.Cache == nil {
+		w.Cache = quota.NewCache(w.Storage.Home)
+	}
+
+	results, err := primeAllEligible(ctx, w.Storage, w.Cache, false, func(name string) bool {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		if failedAt, exists := w.failedPrimes[name]; exists {
+			if time.Since(failedAt) < 15*time.Minute {
+				return true
+			}
+		}
+		return false
+	})
+	if err != nil {
+		logPrintf("[auto-prime] Error checking accounts for priming: %v", err)
+		return
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, r := range results {
+		if r.Primed {
+			delete(w.failedPrimes, r.Account)
+			if r.Error != "" {
+				logPrintf("[auto-prime] Primed account %s (warning: %s)", r.Account, r.Error)
+			} else {
+				logPrintf("[auto-prime] Primed account %s", r.Account)
+			}
+		} else if r.Error != "" {
+			w.failedPrimes[r.Account] = time.Now()
+			logPrintf("[auto-prime] Failed to prime account %s: %s (backing off 15m)", r.Account, r.Error)
+		}
+	}
+}
+
 func (w *LogWatcher) RunForever(ctx context.Context, onMatch func(LogMatch)) error {
 	w.InitOffsets()
 
@@ -231,6 +272,17 @@ func (w *LogWatcher) RunForever(ctx context.Context, onMatch func(LogMatch)) err
 
 	tokenCheckTicker := time.NewTicker(15 * time.Minute)
 	defer tokenCheckTicker.Stop()
+
+	primeInterval := w.PrimeInterval
+	if primeInterval <= 0 {
+		primeInterval = 60 * time.Second
+	}
+	primeTicker := time.NewTicker(primeInterval)
+	defer primeTicker.Stop()
+
+	if w.AutoPrime {
+		w.checkAutoPrime(ctx)
+	}
 
 	for {
 		select {
@@ -243,33 +295,11 @@ func (w *LogWatcher) RunForever(ctx context.Context, onMatch func(LogMatch)) err
 					_, _ = auth.RefreshAccountToken(w.Storage, active.Name, false)
 				}
 			}
-		case <-ticker.C:
+		case <-primeTicker.C:
 			if w.AutoPrime {
-				store := w.Storage
-				if store == nil {
-					store = w.store
-				}
-				if store != nil {
-					cache := w.Cache
-					if cache == nil {
-						cache = w.cache
-					}
-					if cache == nil {
-						cache = quota.NewCache(store.Home)
-						w.Cache = cache
-						w.cache = cache
-					}
-					results, err := primeAllEligible(ctx, store, cache, false)
-					if err == nil {
-						for _, r := range results {
-							if r.Primed {
-								logPrintf("[auto-prime] Primed account %s", r.Account)
-							}
-						}
-					}
-				}
+				w.checkAutoPrime(ctx)
 			}
-
+		case <-ticker.C:
 			matches, err := w.RunOnce()
 			if err != nil {
 				continue

@@ -99,7 +99,11 @@ func newQuotaCmd() *cobra.Command {
 						printed := false
 						for _, r := range results {
 							if r.Primed {
-								fmt.Fprintf(out, "⚡ Primed weekly quota for profile '%s'\n", r.Account)
+								if r.Error != "" {
+									fmt.Fprintf(out, "⚡ Primed weekly quota for profile '%s' (warning: %s)\n", r.Account, r.Error)
+								} else {
+									fmt.Fprintf(out, "⚡ Primed weekly quota for profile '%s'\n", r.Account)
+								}
 								printed = true
 							} else if r.Error != "" {
 								fmt.Fprintf(out, "✗ Failed to prime profile '%s': %s\n", r.Account, r.Error)
@@ -133,7 +137,11 @@ func newQuotaCmd() *cobra.Command {
 						fmt.Fprintf(out, "✗ Failed to prime profile '%s': %v\n\n", targetName, err)
 					}
 				} else if !JSONOut && res != nil && res.Primed {
-					fmt.Fprintf(out, "⚡ Primed weekly quota for profile '%s'\n\n", targetName)
+					if res.Error != "" {
+						fmt.Fprintf(out, "⚡ Primed weekly quota for profile '%s' (warning: %s)\n\n", targetName, res.Error)
+					} else {
+						fmt.Fprintf(out, "⚡ Primed weekly quota for profile '%s'\n\n", targetName)
+					}
 				}
 			}
 

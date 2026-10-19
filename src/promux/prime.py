@@ -283,6 +283,7 @@ def prime_all_eligible(
     storage: StorageEngine,
     cache: QuotaCache | None = None,
     force: bool = False,
+    should_skip: Callable[[str], bool] | None = None,
 ) -> list[PrimeResult]:
     """Iterate over all accounts in the vault and prime those eligible."""
     state = storage.load_state()
@@ -293,6 +294,8 @@ def prime_all_eligible(
     names = sorted(accounts.keys())
     results: list[PrimeResult] = []
     for name in names:
+        if should_skip is not None and should_skip(name):
+            continue
         try:
             res = prime_account(storage, name, force=force, cache=cache)
             results.append(res)

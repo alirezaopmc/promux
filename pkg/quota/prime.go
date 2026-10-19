@@ -277,8 +277,9 @@ func PrimeAccount(ctx context.Context, store *storage.StorageEngine, cache *Quot
 	return result, nil
 }
 
-// PrimeAllEligible iterates over all accounts in the vault and primes those eligible.
-func PrimeAllEligible(ctx context.Context, store *storage.StorageEngine, cache *QuotaCache, force bool) ([]PrimeResult, error) {
+// PrimeAllEligibleWithFilter iterates over all accounts in the vault and primes those eligible,
+// skipping any account where shouldSkip returns true.
+func PrimeAllEligibleWithFilter(ctx context.Context, store *storage.StorageEngine, cache *QuotaCache, force bool, shouldSkip func(account string) bool) ([]PrimeResult, error) {
 	if store == nil {
 		return nil, errors.New("storage engine cannot be nil")
 	}
@@ -300,6 +301,9 @@ func PrimeAllEligible(ctx context.Context, store *storage.StorageEngine, cache *
 
 	results := make([]PrimeResult, 0, len(names))
 	for _, name := range names {
+		if shouldSkip != nil && shouldSkip(name) {
+			continue
+		}
 		res, err := PrimeAccount(ctx, store, cache, name, force)
 		if res != nil {
 			results = append(results, *res)
@@ -313,4 +317,9 @@ func PrimeAllEligible(ctx context.Context, store *storage.StorageEngine, cache *
 	}
 
 	return results, nil
+}
+
+// PrimeAllEligible iterates over all accounts in the vault and primes those eligible.
+func PrimeAllEligible(ctx context.Context, store *storage.StorageEngine, cache *QuotaCache, force bool) ([]PrimeResult, error) {
+	return PrimeAllEligibleWithFilter(ctx, store, cache, force, nil)
 }

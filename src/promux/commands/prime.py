@@ -131,6 +131,9 @@ def cmd_prime(
                 if res.new_reset:
                     rel = format_relative_countdown(res.new_reset, now=datetime.now(timezone.utc))
                     print(f"   [{name}] Token primed! New weekly reset: {res.new_reset} ({rel})")
+                elif res.error:
+                    warn = f"(warning: quota refresh delayed: {res.error})"
+                    print(f"   [{name}] Token primed! {warn}")
                 else:
                     print(f"   [{name}] Token primed!")
         else:

@@ -348,3 +348,29 @@ def test_cli_cmd_quota_prime(test_env, monkeypatch, capsys):
     assert code == 0
     captured = capsys.readouterr()
     assert "acct1" in captured.out
+
+
+def test_prime_all_eligible_with_filter(test_env, monkeypatch):
+    storage, cache = test_env
+    write_test_token(storage.live_token, "tok1")
+    storage.save_profile("alpha")
+    storage.save_profile("beta")
+
+    cache.set("alpha", QuotaSummary(gemini_weekly_remaining=1.0, gemini_weekly_reset=None))
+    cache.set("beta", QuotaSummary(gemini_weekly_remaining=1.0, gemini_weekly_reset=None))
+
+    import promux.prime as prime_mod
+
+    monkeypatch.setattr(prime_mod, "run_agy_prime", lambda: None)
+    monkeypatch.setattr(
+        prime_mod,
+        "query_account_quota",
+        lambda st, name: QuotaSummary(
+            gemini_weekly_remaining=0.999, gemini_weekly_reset="2026-10-26T10:00:00Z"
+        ),
+    )
+
+    # Filter out beta
+    results = prime_all_eligible(storage, cache=cache, force=True, should_skip=lambda name: name == "beta")
+    assert len(results) == 1
+    assert results[0].account == "alpha"

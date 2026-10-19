@@ -193,6 +193,8 @@ func newPrimeCmd() *cobra.Command {
 						if res.NewReset != nil && *res.NewReset != "" {
 							rel := formatResetRelative(res.NewReset, time.Now().UTC())
 							fmt.Fprintf(out, "   [%s] Token primed! New weekly reset: %s (%s)\n", name, *res.NewReset, rel)
+						} else if res.Error != "" {
+							fmt.Fprintf(out, "   [%s] Token primed! (warning: quota refresh delayed: %s)\n", name, res.Error)
 						} else {
 							fmt.Fprintf(out, "   [%s] Token primed!\n", name)
 						}

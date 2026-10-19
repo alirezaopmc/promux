@@ -461,3 +461,55 @@ func TestPrimeAccount_ExpiredTokenRefreshedWithoutDeadlock(t *testing.T) {
 	}
 }
 
+func TestPrimeAllEligibleWithFilter(t *testing.T) {
+	store, cache := setupTestStorage(t)
+
+	writeTestToken(t, store.LiveToken, "token-alpha")
+	_, _ = store.SaveProfile("alpha", nil, nil, "STANDARD")
+
+	writeTestToken(t, store.LiveToken, "token-beta")
+	_, _ = store.SaveProfile("beta", nil, nil, "STANDARD")
+
+	writeTestToken(t, store.LiveToken, "token-gamma")
+	_, _ = store.SaveProfile("gamma", nil, nil, "STANDARD")
+
+	_ = store.SwitchProfile("alpha")
+
+	origRunAgy := runAgyPrime
+	primedAccounts := make(map[string]bool)
+	runAgyPrime = func(ctx context.Context) error {
+		return nil
+	}
+	defer func() { runAgyPrime = origRunAgy }()
+
+	origQueryQuota := queryQuota
+	queryQuota = func(ctx context.Context, s *storage.StorageEngine, account string) (*models.QuotaSummary, error) {
+		primedAccounts[account] = true
+		return &models.QuotaSummary{
+			GeminiWeeklyRemaining: 1.0,
+			GeminiWeeklyReset:     nil,
+		}, nil
+	}
+	defer func() { queryQuota = origQueryQuota }()
+
+	// Skip "beta"
+	results, err := PrimeAllEligibleWithFilter(context.Background(), store, cache, true, func(account string) bool {
+		return account == "beta"
+	})
+	if err != nil {
+		t.Fatalf("PrimeAllEligibleWithFilter failed: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.Account == "beta" {
+			t.Errorf("expected beta to be skipped by filter")
+		}
+	}
+	if primedAccounts["beta"] {
+		t.Errorf("expected beta never to be touched")
+	}
+}
+

@@ -315,7 +315,11 @@ def cmd_quota(
             res = prime_account(storage, name, force=False, cache=cache)
             if not json_out:
                 if res.primed:
-                    print(f"⚡ Primed weekly quota for profile '{name}'\n")
+                    if res.error:
+                        warn = f"(warning: {res.error})"
+                        print(f"⚡ Primed weekly quota for profile '{name}' {warn}\n")
+                    else:
+                        print(f"⚡ Primed weekly quota for profile '{name}'\n")
                 elif res.error:
                     print(f"✗ Failed to prime profile '{name}': {res.error}\n")
 
@@ -381,7 +385,11 @@ def cmd_quota(
             printed = False
             for r in results:
                 if r.primed:
-                    print(f"⚡ Primed weekly quota for profile '{r.account}'")
+                    if r.error:
+                        warn = f"(warning: {r.error})"
+                        print(f"⚡ Primed weekly quota for profile '{r.account}' {warn}")
+                    else:
+                        print(f"⚡ Primed weekly quota for profile '{r.account}'")
                     printed = True
                 elif r.error:
                     print(f"✗ Failed to prime profile '{r.account}': {r.error}")

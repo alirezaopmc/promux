@@ -153,7 +153,7 @@ func TestWatcherAutoPrimeLoop(t *testing.T) {
 	var primedCalls int
 	var loggedMessages []string
 
-	primeAllEligible = func(ctx context.Context, store *storage.StorageEngine, cache *quota.QuotaCache, force bool) ([]quota.PrimeResult, error) {
+	primeAllEligible = func(ctx context.Context, store *storage.StorageEngine, cache *quota.QuotaCache, force bool, shouldSkip func(account string) bool) ([]quota.PrimeResult, error) {
 		primedCalls++
 		return []quota.PrimeResult{
 			{Account: "acc-1", Primed: true},
@@ -176,6 +176,7 @@ func TestWatcherAutoPrimeLoop(t *testing.T) {
 	w := NewLogWatcher(store, nil, geminiDir)
 	w.AutoPrime = true
 	w.PollInterval = 20 * time.Millisecond
+	w.PrimeInterval = 30 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -209,7 +210,7 @@ func TestWatcherAutoPrimeDisabled(t *testing.T) {
 	defer func() { primeAllEligible = origPrime }()
 
 	var primedCalls int
-	primeAllEligible = func(ctx context.Context, store *storage.StorageEngine, cache *quota.QuotaCache, force bool) ([]quota.PrimeResult, error) {
+	primeAllEligible = func(ctx context.Context, store *storage.StorageEngine, cache *quota.QuotaCache, force bool, shouldSkip func(account string) bool) ([]quota.PrimeResult, error) {
 		primedCalls++
 		return nil, nil
 	}
@@ -219,6 +220,7 @@ func TestWatcherAutoPrimeDisabled(t *testing.T) {
 	w := NewLogWatcher(store, nil, tmpDir)
 	w.AutoPrime = false
 	w.PollInterval = 20 * time.Millisecond
+	w.PrimeInterval = 20 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -233,6 +235,85 @@ func TestWatcherAutoPrimeDisabled(t *testing.T) {
 	if primedCalls != 0 {
 		t.Fatalf("expected primeAllEligible NOT to be called when AutoPrime=false, got %d calls", primedCalls)
 	}
+}
+
+func TestWatcherAutoPrimeBackoff(t *testing.T) {
+	origPrime := primeAllEligible
+	origLog := logPrintf
+	defer func() {
+		primeAllEligible = origPrime
+		logPrintf = origLog
+	}()
+
+	var loggedMessages []string
+	logPrintf = func(format string, v ...any) {
+		loggedMessages = append(loggedMessages, fmt.Sprintf(format, v...))
+	}
+
+	callCount := 0
+	var lastSkipFilter func(account string) bool
+
+	primeAllEligible = func(ctx context.Context, store *storage.StorageEngine, cache *quota.QuotaCache, force bool, shouldSkip func(account string) bool) ([]quota.PrimeResult, error) {
+		callCount++
+		lastSkipFilter = shouldSkip
+		if callCount == 1 {
+			// First run: fail "exhausted-acct" with error
+			return []quota.PrimeResult{
+				{Account: "exhausted-acct", Primed: false, Error: "429 RESOURCE_EXHAUSTED"},
+			}, nil
+		}
+		return []quota.PrimeResult{}, nil
+	}
+
+	tmpDir := t.TempDir()
+	store := storage.New(filepath.Join(tmpDir, "promux"), filepath.Join(tmpDir, "gemini"))
+	w := NewLogWatcher(store, nil, tmpDir)
+	w.AutoPrime = true
+	w.PrimeInterval = 20 * time.Millisecond
+	w.PollInterval = 20 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		_ = w.RunForever(ctx, nil)
+	}()
+
+	// Wait for first call to register failure
+	time.Sleep(50 * time.Millisecond)
+
+	w.mu.Lock()
+	failedAt, ok := w.failedPrimes["exhausted-acct"]
+	w.mu.Unlock()
+
+	if !ok {
+		t.Fatal("expected exhausted-acct to be in failedPrimes")
+	}
+	if time.Since(failedAt) > 5*time.Second {
+		t.Errorf("expected failedAt to be recent, got %v", failedAt)
+	}
+
+	// Verify log message
+	foundBackoffLog := false
+	for _, msg := range loggedMessages {
+		if strings.Contains(msg, "[auto-prime] Failed to prime account exhausted-acct: 429 RESOURCE_EXHAUSTED (backing off 15m)") {
+			foundBackoffLog = true
+			break
+		}
+	}
+	if !foundBackoffLog {
+		t.Errorf("expected backoff log message, got: %v", loggedMessages)
+	}
+
+	// Verify shouldSkip skips during cooldown
+	if lastSkipFilter == nil || !lastSkipFilter("exhausted-acct") {
+		t.Errorf("expected skipFilter to return true for exhausted-acct during cooldown")
+	}
+	if lastSkipFilter != nil && lastSkipFilter("other-acct") {
+		t.Errorf("expected skipFilter to return false for other-acct")
+	}
+
+	cancel()
 }
 
 
