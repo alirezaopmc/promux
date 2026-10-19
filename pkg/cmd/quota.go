@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,6 +45,7 @@ func newQuotaCmd() *cobra.Command {
 		accountName string
 		allAccounts bool
 		force       bool
+		prime       bool
 	)
 
 	cmd := &cobra.Command{
@@ -63,12 +65,19 @@ func newQuotaCmd() *cobra.Command {
   # Bypass local cache and query Google APIs live
   promux quota --all --refresh
 
+  # Prime eligible profiles and display updated quota overview
+  promux quota --all --prime
+
   # Export all quotas as machine-readable JSON
   promux quota --all --json`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store := GetStorage()
 			out := cmd.OutOrStdout()
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
 
 			if len(args) > 0 {
 				if args[0] == "all" {
@@ -81,6 +90,27 @@ func newQuotaCmd() *cobra.Command {
 			cache := quota.NewCache(store.Home)
 
 			if allAccounts {
+				if prime {
+					results, err := primeAllEligibleFunc(ctx, store, cache, false)
+					if err != nil {
+						return err
+					}
+					if !JSONOut {
+						printed := false
+						for _, r := range results {
+							if r.Primed {
+								fmt.Fprintf(out, "⚡ Primed weekly quota for profile '%s'\n", r.Account)
+								printed = true
+							} else if r.Error != "" {
+								fmt.Fprintf(out, "✗ Failed to prime profile '%s': %s\n", r.Account, r.Error)
+								printed = true
+							}
+						}
+						if printed {
+							fmt.Fprintln(out)
+						}
+					}
+				}
 				return listAllQuotas(out, store, cache, force)
 			}
 
@@ -94,6 +124,17 @@ func newQuotaCmd() *cobra.Command {
 					return fmt.Errorf("no active profile set; use --account <name>, 'promux quota --all', or 'promux switch <name>'")
 				}
 				targetName = active.Name
+			}
+
+			if prime {
+				res, err := primeAccountFunc(ctx, store, cache, targetName, false)
+				if err != nil {
+					if !JSONOut {
+						fmt.Fprintf(out, "✗ Failed to prime profile '%s': %v\n\n", targetName, err)
+					}
+				} else if !JSONOut && res != nil && res.Primed {
+					fmt.Fprintf(out, "⚡ Primed weekly quota for profile '%s'\n\n", targetName)
+				}
 			}
 
 			qs, _, err := fetchAccountQuota(store, cache, targetName, force)
@@ -113,6 +154,7 @@ func newQuotaCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&accountName, "account", "a", "", "Target account profile (defaults to active)")
 	cmd.Flags().BoolVarP(&allAccounts, "all", "A", false, "Inspect quota for all profiles in the vault")
 	cmd.Flags().BoolVarP(&force, "refresh", "r", false, "Bypass cache and force live inspection")
+	cmd.Flags().BoolVarP(&prime, "prime", "p", false, "Prime accounts that have reset weekly quota before displaying")
 
 	return cmd
 }

@@ -15,9 +15,11 @@ import (
 )
 
 var (
-	primeAccountFunc = quota.PrimeAccount
-	queryQuotaFunc   = quota.QueryAccountQuota
+	primeAccountFunc     = quota.PrimeAccount
+	primeAllEligibleFunc = quota.PrimeAllEligible
+	queryQuotaFunc       = quota.QueryAccountQuota
 )
+
 
 func newPrimeCmd() *cobra.Command {
 	var (

@@ -294,3 +294,276 @@ func TestPrimeCmd_LiveExecution(t *testing.T) {
 		}
 	})
 }
+
+func TestQuotaCmdPrimeFlag(t *testing.T) {
+	cmd := newQuotaCmd()
+	flag := cmd.Flags().Lookup("prime")
+	if flag == nil {
+		t.Fatal("expected --prime flag to be registered on quota command")
+	}
+	if flag.Shorthand != "p" {
+		t.Errorf("expected --prime flag shorthand to be 'p', got %q", flag.Shorthand)
+	}
+}
+
+func TestQuotaCmd_PrimeAllAccounts(t *testing.T) {
+	setupTestEnv(t)
+
+	_, err := executeCommand("save", "alpha", "--email", "alpha@example.com")
+	if err != nil {
+		t.Fatalf("failed to save alpha: %v", err)
+	}
+	_, err = executeCommand("save", "beta", "--email", "beta@example.com")
+	if err != nil {
+		t.Fatalf("failed to save beta: %v", err)
+	}
+
+	newReset := time.Now().UTC().Add(7 * 24 * time.Hour).Format(time.RFC3339)
+	store := GetStorage()
+	cache := quota.NewCache(store.Home)
+
+	qsBeta := &models.QuotaSummary{
+		Gemini5hRemaining:         1.0,
+		GeminiWeeklyRemaining:     0.8,
+		ThirdParty5hRemaining:     1.0,
+		ThirdPartyWeeklyRemaining: 0.8,
+	}
+	_ = cache.Set("beta", qsBeta)
+
+	origPrimeAll := primeAllEligibleFunc
+	defer func() { primeAllEligibleFunc = origPrimeAll }()
+
+	primeAllCalled := false
+	primeAllEligibleFunc = func(ctx context.Context, s *storage.StorageEngine, c *quota.QuotaCache, force bool) ([]quota.PrimeResult, error) {
+		primeAllCalled = true
+		qsAlpha := &models.QuotaSummary{
+			Gemini5hRemaining:         1.0,
+			GeminiWeeklyRemaining:     1.0,
+			GeminiWeeklyReset:         &newReset,
+			ThirdParty5hRemaining:     1.0,
+			ThirdPartyWeeklyRemaining: 1.0,
+		}
+		_ = c.Set("alpha", qsAlpha)
+		return []quota.PrimeResult{
+			{Account: "alpha", Primed: true, NewReset: &newReset},
+			{Account: "beta", Primed: false, Reason: "active countdown"},
+		}, nil
+	}
+
+	out, err := executeCommand("quota", "--all", "--prime")
+	if err != nil {
+		t.Fatalf("quota --all --prime failed: %v (out: %s)", err, out)
+	}
+	if !primeAllCalled {
+		t.Fatalf("expected primeAllEligibleFunc to be called")
+	}
+	if !strings.Contains(out, "⚡ Primed weekly quota for profile 'alpha'") {
+		t.Errorf("expected announcement for primed alpha, got: %s", out)
+	}
+	if !strings.Contains(out, "alpha") || !strings.Contains(out, "beta") {
+		t.Errorf("expected table to contain profiles alpha and beta, got: %s", out)
+	}
+
+	// Also test -p shorthand
+	primeAllCalled = false
+	out, err = executeCommand("quota", "--all", "-p")
+	if err != nil {
+		t.Fatalf("quota --all -p failed: %v", err)
+	}
+	if !primeAllCalled {
+		t.Fatalf("expected primeAllEligibleFunc to be called for -p")
+	}
+}
+
+func TestQuotaCmd_PrimeAllAccounts_JSON(t *testing.T) {
+	setupTestEnv(t)
+
+	_, err := executeCommand("save", "alpha", "--email", "alpha@example.com")
+	if err != nil {
+		t.Fatalf("failed to save alpha: %v", err)
+	}
+
+	newReset := time.Now().UTC().Add(7 * 24 * time.Hour).Format(time.RFC3339)
+
+	origPrimeAll := primeAllEligibleFunc
+	defer func() { primeAllEligibleFunc = origPrimeAll }()
+
+	primeAllEligibleFunc = func(ctx context.Context, s *storage.StorageEngine, c *quota.QuotaCache, force bool) ([]quota.PrimeResult, error) {
+		qsAlpha := &models.QuotaSummary{
+			Gemini5hRemaining:         1.0,
+			GeminiWeeklyRemaining:     1.0,
+			GeminiWeeklyReset:         &newReset,
+			ThirdParty5hRemaining:     1.0,
+			ThirdPartyWeeklyRemaining: 1.0,
+		}
+		_ = c.Set("alpha", qsAlpha)
+		return []quota.PrimeResult{
+			{Account: "alpha", Primed: true, NewReset: &newReset},
+		}, nil
+	}
+
+	out, err := executeCommand("quota", "--all", "--prime", "--json")
+	if err != nil {
+		t.Fatalf("quota --all --prime --json failed: %v", err)
+	}
+
+	// Must be valid JSON without prefixed text
+	var records []AccountQuotaRecord
+	if err := json.Unmarshal([]byte(out), &records); err != nil {
+		t.Fatalf("failed to unmarshal JSON output: %v (raw: %q)", err, out)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+	if records[0].Account != "alpha" {
+		t.Errorf("expected account 'alpha', got %s", records[0].Account)
+	}
+	if records[0].Gemini == nil || records[0].Gemini.ResetWeekly == nil || *records[0].Gemini.ResetWeekly != newReset {
+		t.Errorf("expected updated Gemini reset timestamp, got: %+v", records[0].Gemini)
+	}
+}
+
+func TestQuotaCmd_PrimeSingleAccount(t *testing.T) {
+	setupTestEnv(t)
+
+	_, err := executeCommand("save", "gamma", "--email", "gamma@example.com")
+	if err != nil {
+		t.Fatalf("failed to save gamma: %v", err)
+	}
+
+	newReset := time.Now().UTC().Add(7 * 24 * time.Hour).Format(time.RFC3339)
+
+	origPrimeAccount := primeAccountFunc
+	defer func() { primeAccountFunc = origPrimeAccount }()
+
+	t.Run("successful prime and display", func(t *testing.T) {
+		primeCalled := false
+		primeAccountFunc = func(ctx context.Context, s *storage.StorageEngine, c *quota.QuotaCache, acct string, f bool) (*quota.PrimeResult, error) {
+			primeCalled = true
+			if acct != "gamma" {
+				t.Errorf("expected target 'gamma', got %s", acct)
+			}
+			qsGamma := &models.QuotaSummary{
+				Gemini5hRemaining:         1.0,
+				GeminiWeeklyRemaining:     1.0,
+				GeminiWeeklyReset:         &newReset,
+				ThirdParty5hRemaining:     1.0,
+				ThirdPartyWeeklyRemaining: 1.0,
+			}
+			_ = c.Set("gamma", qsGamma)
+			return &quota.PrimeResult{
+				Account:  acct,
+				Primed:   true,
+				NewReset: &newReset,
+			}, nil
+		}
+
+		out, err := executeCommand("quota", "gamma", "--prime")
+		if err != nil {
+			t.Fatalf("quota gamma --prime failed: %v (out: %s)", err, out)
+		}
+		if !primeCalled {
+			t.Fatalf("expected primeAccountFunc to be called")
+		}
+		if !strings.Contains(out, "⚡ Primed weekly quota for profile 'gamma'") {
+			t.Errorf("missing primed notice in output: %s", out)
+		}
+		if !strings.Contains(out, "Quota Summary for Profile: gamma") {
+			t.Errorf("missing quota summary header: %s", out)
+		}
+	})
+
+	t.Run("single account json output", func(t *testing.T) {
+		primeAccountFunc = func(ctx context.Context, s *storage.StorageEngine, c *quota.QuotaCache, acct string, f bool) (*quota.PrimeResult, error) {
+			qsGamma := &models.QuotaSummary{
+				Gemini5hRemaining:         1.0,
+				GeminiWeeklyRemaining:     1.0,
+				GeminiWeeklyReset:         &newReset,
+				ThirdParty5hRemaining:     1.0,
+				ThirdPartyWeeklyRemaining: 1.0,
+			}
+			_ = c.Set("gamma", qsGamma)
+			return &quota.PrimeResult{
+				Account:  acct,
+				Primed:   true,
+				NewReset: &newReset,
+			}, nil
+		}
+
+		out, err := executeCommand("quota", "gamma", "--prime", "--json")
+		if err != nil {
+			t.Fatalf("quota gamma --prime --json failed: %v", err)
+		}
+		var qs models.QuotaSummary
+		if err := json.Unmarshal([]byte(out), &qs); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v (raw: %q)", err, out)
+		}
+		if qs.GeminiWeeklyReset == nil || *qs.GeminiWeeklyReset != newReset {
+			t.Errorf("unexpected weekly reset in json: %+v", qs)
+		}
+	})
+
+	t.Run("ineligible account skips announcement", func(t *testing.T) {
+		primeAccountFunc = func(ctx context.Context, s *storage.StorageEngine, c *quota.QuotaCache, acct string, f bool) (*quota.PrimeResult, error) {
+			qsGamma := &models.QuotaSummary{
+				Gemini5hRemaining:         0.9,
+				GeminiWeeklyRemaining:     0.9,
+				ThirdParty5hRemaining:     0.9,
+				ThirdPartyWeeklyRemaining: 0.9,
+			}
+			_ = c.Set("gamma", qsGamma)
+			return &quota.PrimeResult{
+				Account: acct,
+				Primed:  false,
+				Reason:  "active countdown",
+			}, nil
+		}
+
+		out, err := executeCommand("quota", "gamma", "--prime")
+		if err != nil {
+			t.Fatalf("quota gamma --prime failed: %v", err)
+		}
+		if strings.Contains(out, "⚡ Primed weekly quota") {
+			t.Errorf("should not announce priming for ineligible account: %s", out)
+		}
+		if !strings.Contains(out, "Quota Summary for Profile: gamma") {
+			t.Errorf("expected quota summary: %s", out)
+		}
+	})
+}
+
+func TestQuotaCmd_PrimeAllAccounts_WithError(t *testing.T) {
+	setupTestEnv(t)
+
+	_, err := executeCommand("save", "alpha", "--email", "alpha@example.com")
+	if err != nil {
+		t.Fatalf("failed to save alpha: %v", err)
+	}
+
+	origPrimeAll := primeAllEligibleFunc
+	defer func() { primeAllEligibleFunc = origPrimeAll }()
+
+	primeAllEligibleFunc = func(ctx context.Context, s *storage.StorageEngine, c *quota.QuotaCache, force bool) ([]quota.PrimeResult, error) {
+		qsAlpha := &models.QuotaSummary{
+			Gemini5hRemaining:     0.5,
+			GeminiWeeklyRemaining: 0.5,
+		}
+		_ = c.Set("alpha", qsAlpha)
+		return []quota.PrimeResult{
+			{Account: "alpha", Primed: false, Error: "simulated lock failure"},
+		}, nil
+	}
+
+	out, err := executeCommand("quota", "--all", "--prime")
+	if err != nil {
+		t.Fatalf("unexpected command failure: %v", err)
+	}
+	if !strings.Contains(out, "✗ Failed to prime profile 'alpha': simulated lock failure") {
+		t.Errorf("expected error warning in output, got: %s", out)
+	}
+	if !strings.Contains(out, "alpha") {
+		t.Errorf("expected table to still render alpha, got: %s", out)
+	}
+}
+
+
