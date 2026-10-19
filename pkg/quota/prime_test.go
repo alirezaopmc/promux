@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/alirezaopmc/promux/pkg/auth"
 	"github.com/alirezaopmc/promux/pkg/models"
 	"github.com/alirezaopmc/promux/pkg/storage"
 )
@@ -372,3 +375,89 @@ func TestPrimeAllEligible(t *testing.T) {
 		t.Errorf("expected acct-b to not be primed, got %+v", resB)
 	}
 }
+
+func TestPrimeAccount_ExpiredTokenRefreshedWithoutDeadlock(t *testing.T) {
+	mockOAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "fresh-renewed-token",
+			"expires_in":   3600,
+		})
+	}))
+	defer mockOAuth.Close()
+
+	t.Setenv("PROMUX_OAUTH_TOKEN_URL", mockOAuth.URL)
+
+	store, cache := setupTestStorage(t)
+
+	// Target profile with expired token
+	expiredToken := filepath.Join(store.AccountsDir, "expiredAcct", "antigravity-oauth-token")
+	_ = os.MkdirAll(filepath.Dir(expiredToken), 0755)
+	expiredData := map[string]any{
+		"token": map[string]any{
+			"access_token":  "expired-token",
+			"refresh_token": "valid-refresh-token",
+			"expiry":        "2020-01-01T00:00:00Z",
+		},
+	}
+	data, _ := json.Marshal(expiredData)
+	_ = os.WriteFile(expiredToken, data, 0600)
+
+	// Save profile to state
+	_ = store.Transaction(context.Background(), func(state *models.State) error {
+		now := time.Now().UTC()
+		state.Accounts["expiredAcct"] = &models.AccountMeta{
+			Name:       "expiredAcct",
+			Enabled:    true,
+			SavedAt:    &now,
+			LastUsedAt: &now,
+			PlanType:   "STANDARD",
+		}
+		return nil
+	})
+
+	// Set cache with eligible reset
+	past := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339)
+	_ = cache.Set("expiredAcct", &models.QuotaSummary{
+		GeminiWeeklyRemaining: 1.0,
+		GeminiWeeklyReset:     &past,
+	})
+
+	var liveTokenDuringAgy string
+	origRunAgy := runAgyPrime
+	runAgyPrime = func(ctx context.Context) error {
+		liveData, err := auth.ReadTokenData(store.LiveToken)
+		if err != nil {
+			return err
+		}
+		liveTokenDuringAgy = auth.ExtractAccessToken(liveData)
+		return nil
+	}
+	defer func() { runAgyPrime = origRunAgy }()
+
+	origQueryQuota := queryQuota
+	queryQuota = func(ctx context.Context, s *storage.StorageEngine, account string) (*models.QuotaSummary, error) {
+		newReset := time.Now().UTC().Add(168 * time.Hour).Format(time.RFC3339)
+		return &models.QuotaSummary{
+			GeminiWeeklyRemaining: 0.999,
+			GeminiWeeklyReset:     &newReset,
+		}, nil
+	}
+	defer func() { queryQuota = origQueryQuota }()
+
+	// Execute with short timeout: if there's a deadlock on store.LockFile, this will fail or time out
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	res, err := PrimeAccount(ctx, store, cache, "expiredAcct", false)
+	if err != nil {
+		t.Fatalf("PrimeAccount failed: %v", err)
+	}
+	if !res.Primed {
+		t.Errorf("expected primed=true, got %v", res.Primed)
+	}
+	if liveTokenDuringAgy != "fresh-renewed-token" {
+		t.Errorf("expected agy to run with 'fresh-renewed-token', got '%s'", liveTokenDuringAgy)
+	}
+}
+

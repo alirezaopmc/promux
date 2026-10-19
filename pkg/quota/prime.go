@@ -162,6 +162,19 @@ func PrimeAccount(ctx context.Context, store *storage.StorageEngine, cache *Quot
 		Reason:  reason,
 	}
 
+	// Proactively check and refresh token before acquiring store.LockFile.
+	// This avoids deadlocks if auth.RefreshAccountToken needs to perform Tier 2 fallback
+	// which acquires store.LockFile internally.
+	tokenData, err := auth.ReadTokenData(vaultToken)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read vault token: %w", err)
+	}
+	if auth.IsTokenExpired(tokenData, config.DefaultTokenExpiryBufferSeconds) {
+		if _, err := auth.RefreshAccountToken(store, accountName, true); err != nil {
+			return nil, fmt.Errorf("failed to refresh token for %s: %w", accountName, err)
+		}
+	}
+
 	primeErr := lock.WithLock(ctx, store.LockFile, 30*time.Second, func() error {
 		curState, err := store.LoadState()
 		if err != nil {
@@ -178,7 +191,9 @@ func PrimeAccount(ctx context.Context, store *storage.StorageEngine, cache *Quot
 		liveExisted := false
 
 		if !isActive {
-			_ = os.MkdirAll(filepath.Dir(store.LiveToken), 0755)
+			if err := os.MkdirAll(filepath.Dir(store.LiveToken), 0755); err != nil {
+				return fmt.Errorf("failed to create live token directory: %w", err)
+			}
 			if _, err := os.Stat(store.LiveToken); err == nil {
 				liveExisted = true
 				if err := auth.AtomicCopyToken(store.LiveToken, backupPath); err != nil {
@@ -201,14 +216,11 @@ func PrimeAccount(ctx context.Context, store *storage.StorageEngine, cache *Quot
 			}
 		}
 
-		// Check token expiry; if expired, refresh
-		tokenData, err := auth.ReadTokenData(store.LiveToken)
-		if err == nil && auth.IsTokenExpired(tokenData, config.DefaultTokenExpiryBufferSeconds) {
-			if _, err := auth.RefreshAccountToken(store, accountName, true); err != nil {
-				return fmt.Errorf("failed to refresh token: %w", err)
-			}
-			if !isActive {
-				_ = auth.AtomicCopyToken(vaultToken, store.LiveToken)
+		// Double-check live token expiry inside lock via native refresh (no store.LockFile re-entry)
+		liveTokenData, err := auth.ReadTokenData(store.LiveToken)
+		if err == nil && auth.IsTokenExpired(liveTokenData, config.DefaultTokenExpiryBufferSeconds) {
+			if _, _, err := auth.RefreshTokenNative(store.LiveToken, liveTokenData); err != nil {
+				return fmt.Errorf("failed to refresh live token: %w", err)
 			}
 		}
 
