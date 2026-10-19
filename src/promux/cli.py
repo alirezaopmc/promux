@@ -48,6 +48,7 @@ from .auth import (
 from .auth import (
     sync_active_tokens as _sync_active_tokens,
 )
+from .commands.prime import cmd_prime
 from .commands.profile import (
     cmd_list,
     cmd_next,
@@ -93,6 +94,7 @@ __all__ = [
     "cmd_whoami",
     "cmd_remove",
     "cmd_quota",
+    "cmd_prime",
     "cmd_refresh",
     "cmd_watch",
     "cmd_tools",
@@ -153,6 +155,7 @@ COMMAND_CAPABILITIES: dict[str, str] = {
     "whoami": "vault",
     "remove": "vault",
     "quota": "quota",
+    "prime": "quota",
     "refresh": "refresh",
     "watch": "watch",
 }
@@ -233,6 +236,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     quota_p.add_argument(
         "--no-cache", action="store_true", default=False, help="Bypass quota cache"
+    )
+    quota_p.add_argument(
+        "-p",
+        "--prime",
+        action="store_true",
+        default=False,
+        help="Prime accounts that have reset weekly quota before displaying",
+    )
+
+    prime_p = sub.add_parser(
+        "prime",
+        parents=[common],
+        help="Prime weekly quota reset countdowns via minimal headless turns",
+    )
+    prime_p.add_argument(
+        "account",
+        nargs="?",
+        default=None,
+        help="Profile name (default: all profiles in vault)",
+    )
+    prime_p.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        default=False,
+        help="Force priming even if an active countdown is already ticking",
+    )
+    prime_p.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Check eligibility and list accounts without sending tokens",
     )
 
     refresh_p = sub.add_parser("refresh", parents=[common], help="Refresh OAuth tokens")
@@ -380,7 +416,20 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_next(failover, args.reason, args.cooldown, json_out)
         elif args.command == "quota":
             return cmd_quota(
-                storage, args.name, json_out, no_cache=getattr(args, "no_cache", False)
+                storage,
+                args.name,
+                json_out,
+                no_cache=getattr(args, "no_cache", False),
+                prime=getattr(args, "prime", False),
+            )
+        elif args.command == "prime":
+            return cmd_prime(
+                storage,
+                args.account,
+                force=args.force,
+                dry_run=args.dry_run,
+                json_out=json_out,
+                no_color=no_color,
             )
         elif args.command == "refresh":
             return cmd_refresh(storage, args.name, args.force, json_out)

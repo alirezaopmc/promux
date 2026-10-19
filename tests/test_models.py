@@ -16,6 +16,7 @@ from promux.constants import (
     RESOURCE_EXHAUSTED_RE,
     STATE_FILE,
     USER_AGENT,
+    USER_QUOTA_ENDPOINT,
     USERINFO_URL,
     WEEKLY_QUOTA_RE,
 )
@@ -219,6 +220,7 @@ def test_constants_defaults_and_paths():
     assert CODE_ASSIST_BASE_URL == "https://cloudcode-pa.googleapis.com"
     assert LOAD_ENDPOINT == "/v1internal:loadCodeAssist"
     assert QUOTA_ENDPOINT == "/v1internal:retrieveUserQuotaSummary"
+    assert USER_QUOTA_ENDPOINT == "/v1internal:retrieveUserQuota"
     assert USERINFO_URL == "https://www.googleapis.com/oauth2/v3/userinfo"
     assert USER_AGENT == "antigravity"
 

@@ -302,12 +302,23 @@ def cmd_quota(
     name: str | None,
     json_out: bool,
     no_cache: bool = False,
+    prime: bool = False,
 ) -> int:
     active_profile = storage.get_active_profile()
     cache = QuotaCache(storage.home)
 
     # Single-profile detail mode
     if name is not None:
+        if prime:
+            from ..prime import prime_account
+
+            res = prime_account(storage, name, force=False, cache=cache)
+            if not json_out:
+                if res.primed:
+                    print(f"⚡ Primed weekly quota for profile '{name}'\n")
+                elif res.error:
+                    print(f"✗ Failed to prime profile '{name}': {res.error}\n")
+
         qs, project_id, err, is_cached = _dispatch_fetch_quota(
             storage, name, no_cache=no_cache, cache=cache
         )
@@ -362,6 +373,22 @@ def cmd_quota(
         return 0
 
     # Multi-profile overview mode
+    if prime:
+        from ..prime import prime_all_eligible
+
+        results = prime_all_eligible(storage, cache=cache, force=False)
+        if not json_out:
+            printed = False
+            for r in results:
+                if r.primed:
+                    print(f"⚡ Primed weekly quota for profile '{r.account}'")
+                    printed = True
+                elif r.error:
+                    print(f"✗ Failed to prime profile '{r.account}': {r.error}")
+                    printed = True
+            if printed:
+                print()
+
     accounts = storage.list_accounts()
     if not accounts:
         msg = "No accounts registered in vault."

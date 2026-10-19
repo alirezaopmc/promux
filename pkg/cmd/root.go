@@ -38,6 +38,7 @@ func init() {
 
 	RootCmd.AddCommand(newProfileCmd())
 	RootCmd.AddCommand(newQuotaCmd())
+	RootCmd.AddCommand(newPrimeCmd())
 	RootCmd.AddCommand(newWatchCmd())
 	RootCmd.AddCommand(newRunCmd())
 	RootCmd.AddCommand(newToolsCmd())

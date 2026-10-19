@@ -108,6 +108,7 @@ CODE_ASSIST_BASE_URL = os.environ.get(
 FALLBACK_CODE_ASSIST_BASE_URL = "https://daily-cloudcode-pa.googleapis.com"
 LOAD_ENDPOINT = "/v1internal:loadCodeAssist"
 QUOTA_ENDPOINT = "/v1internal:retrieveUserQuotaSummary"
+USER_QUOTA_ENDPOINT = "/v1internal:retrieveUserQuota"
 USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 DEFAULT_OAUTH_CLIENT_ID = "REDACTED_OAUTH_CLIENT_ID"
 DEFAULT_OAUTH_CLIENT_SECRET = "REDACTED_OAUTH_CLIENT_SECRET"
@@ -215,6 +216,7 @@ __all__ = [
     "STATE_FILE",
     "USER_AGENT",
     "USERINFO_URL",
+    "USER_QUOTA_ENDPOINT",
     "WEEKLY_QUOTA_RE",
     "detect_code_assist_url",
     "get_default_http_timeout",

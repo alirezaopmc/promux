@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,7 +14,13 @@ import (
 	"github.com/alirezaopmc/promux/pkg/auth"
 	"github.com/alirezaopmc/promux/pkg/config"
 	"github.com/alirezaopmc/promux/pkg/failover"
+	"github.com/alirezaopmc/promux/pkg/quota"
 	"github.com/alirezaopmc/promux/pkg/storage"
+)
+
+var (
+	primeAllEligible = quota.PrimeAllEligible
+	logPrintf        = log.Printf
 )
 
 type LogWatcher struct {
@@ -22,10 +29,16 @@ type LogWatcher struct {
 	GeminiHome   string
 	CustomLogs   []string
 	PollInterval time.Duration
+	AutoPrime    bool
+	Cache        *quota.QuotaCache
+	store        *storage.StorageEngine
+	cache        *quota.QuotaCache
 	offsets      map[string]int64
 	inodes       map[string]uint64
 	mu           sync.Mutex
 }
+
+type WatcherEngine = LogWatcher
 
 func NewLogWatcher(storage *storage.StorageEngine, failover *failover.FailoverEngine, geminiHome string) *LogWatcher {
 	if geminiHome == "" && storage != nil {
@@ -35,15 +48,31 @@ func NewLogWatcher(storage *storage.StorageEngine, failover *failover.FailoverEn
 		geminiHome = config.GeminiHome()
 	}
 
-	return &LogWatcher{
+	w := &LogWatcher{
 		Storage:      storage,
+		store:        storage,
 		Failover:     failover,
 		GeminiHome:   geminiHome,
 		PollInterval: 1 * time.Second,
 		offsets:      make(map[string]int64),
 		inodes:       make(map[string]uint64),
 	}
+	if storage != nil {
+		w.cache = quota.NewCache(storage.Home)
+		w.Cache = w.cache
+	}
+	return w
 }
+
+func NewWatcher(geminiHome string, pollInterval time.Duration, autoPrime bool) *LogWatcher {
+	w := NewLogWatcher(nil, nil, geminiHome)
+	if pollInterval > 0 {
+		w.PollInterval = pollInterval
+	}
+	w.AutoPrime = autoPrime
+	return w
+}
+
 
 func (w *LogWatcher) GetLogFiles() []string {
 	if len(w.CustomLogs) > 0 {
@@ -215,6 +244,32 @@ func (w *LogWatcher) RunForever(ctx context.Context, onMatch func(LogMatch)) err
 				}
 			}
 		case <-ticker.C:
+			if w.AutoPrime {
+				store := w.Storage
+				if store == nil {
+					store = w.store
+				}
+				if store != nil {
+					cache := w.Cache
+					if cache == nil {
+						cache = w.cache
+					}
+					if cache == nil {
+						cache = quota.NewCache(store.Home)
+						w.Cache = cache
+						w.cache = cache
+					}
+					results, err := primeAllEligible(ctx, store, cache, false)
+					if err == nil {
+						for _, r := range results {
+							if r.Primed {
+								logPrintf("[auto-prime] Primed account %s", r.Account)
+							}
+						}
+					}
+				}
+			}
+
 			matches, err := w.RunOnce()
 			if err != nil {
 				continue

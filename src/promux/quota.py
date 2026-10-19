@@ -2,17 +2,21 @@ import json
 import logging
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any
 
 from .constants import (
+    CODE_ASSIST_BASE_URL,
     FALLBACK_CODE_ASSIST_BASE_URL,
     LOAD_ENDPOINT,
     QUOTA_ENDPOINT,
     USER_AGENT,
+    USER_QUOTA_ENDPOINT,
     USERINFO_URL,
     detect_code_assist_url,
     get_default_http_timeout,
 )
+from .formatters import parse_iso_utc
 from .models import QuotaSummary
 
 logger = logging.getLogger(__name__)
@@ -26,7 +30,12 @@ class QuotaClient:
         self.base_url = (base_url or detect_code_assist_url()).rstrip("/")
         self.timeout = timeout if timeout is not None else get_default_http_timeout()
 
-    def _post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post(
+        self,
+        endpoint: str,
+        payload: dict[str, Any],
+        base_url: str | None = None,
+    ) -> dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")
         headers = {
             "Authorization": f"Bearer {self.token}",
@@ -34,9 +43,15 @@ class QuotaClient:
             "User-Agent": USER_AGENT,
         }
 
-        urls_to_try = [f"{self.base_url}{endpoint}"]
-        if self.base_url != FALLBACK_CODE_ASSIST_BASE_URL:
-            urls_to_try.append(f"{FALLBACK_CODE_ASSIST_BASE_URL}{endpoint}")
+        primary = (base_url or self.base_url).rstrip("/")
+        fallback = (
+            CODE_ASSIST_BASE_URL
+            if primary == FALLBACK_CODE_ASSIST_BASE_URL
+            else FALLBACK_CODE_ASSIST_BASE_URL
+        )
+        urls_to_try = [f"{primary}{endpoint}"]
+        if fallback != primary and f"{fallback}{endpoint}" not in urls_to_try:
+            urls_to_try.append(f"{fallback}{endpoint}")
 
         last_error = None
         for url in urls_to_try:
@@ -118,27 +133,100 @@ class QuotaClient:
         resp = self._post(QUOTA_ENDPOINT, {"project": project_id})
         qs = QuotaSummary()
 
-        for group in resp.get("groups", []):
-            group_name = group.get("displayName", "").lower()
-            for bucket in group.get("buckets", []):
-                window = bucket.get("window", "").lower()
-                rem = bucket.get("remainingFraction")
-                rem_val = float(rem) if rem is not None else 1.0
-                reset = bucket.get("resetTime")
+        def _apply_groups(data: dict[str, Any]) -> None:
+            for group in data.get("groups", []):
+                group_name = group.get("displayName", "").lower()
+                for bucket in group.get("buckets", []):
+                    window = bucket.get("window", "").lower()
+                    rem = bucket.get("remainingFraction")
+                    rem_val = float(rem) if rem is not None else 1.0
+                    reset = bucket.get("resetTime")
 
-                if "gemini" in group_name:
-                    if window == "5h" or "short" in window:
-                        qs.gemini_5h_remaining = rem_val
-                        qs.gemini_5h_reset = reset
-                    elif window == "weekly":
-                        qs.gemini_weekly_remaining = rem_val
-                        qs.gemini_weekly_reset = reset
-                else:  # 3p / Claude / GPT
-                    if window == "5h" or "short" in window:
-                        qs.third_party_5h_remaining = rem_val
-                        qs.third_party_5h_reset = reset
-                    elif window == "weekly":
-                        qs.third_party_weekly_remaining = rem_val
-                        qs.third_party_weekly_reset = reset
+                    if "gemini" in group_name:
+                        if window == "5h" or "short" in window:
+                            qs.gemini_5h_remaining = rem_val
+                            qs.gemini_5h_reset = reset
+                        elif window == "weekly":
+                            qs.gemini_weekly_remaining = rem_val
+                            qs.gemini_weekly_reset = reset
+                    else:  # 3p / Claude / GPT
+                        if window == "5h" or "short" in window:
+                            qs.third_party_5h_remaining = rem_val
+                            qs.third_party_5h_reset = reset
+                        elif window == "weekly":
+                            qs.third_party_weekly_remaining = rem_val
+                            qs.third_party_weekly_reset = reset
+
+        _apply_groups(resp)
+
+        # Fallback to production endpoint if Gemini group was missing
+        # (e.g. daily endpoint only returns third-party models in retrieveUserQuotaSummary)
+        if (
+            (qs.gemini_weekly_reset is None or qs.gemini_5h_reset is None)
+            and self.base_url != CODE_ASSIST_BASE_URL
+        ):
+            try:
+                prod_resp = self._post(
+                    QUOTA_ENDPOINT, {"project": project_id}, base_url=CODE_ASSIST_BASE_URL
+                )
+                _apply_groups(prod_resp)
+            except TypeError:
+                try:
+                    prod_resp = self._post(QUOTA_ENDPOINT, {"project": project_id})
+                    _apply_groups(prod_resp)
+                except Exception:
+                    logger.debug(
+                        "Failed to fetch quota summary fallback with 2-arg mock", exc_info=True
+                    )
+            except Exception:
+                logger.debug(
+                    "Failed to fetch quota summary fallback from %s",
+                    CODE_ASSIST_BASE_URL,
+                    exc_info=True,
+                )
+
+        # Query retrieveUserQuota for real-time per-model consumption
+        # (e.g. active 5h Gemini quota on daily/prod)
+        try:
+            uq_resp = self._post(USER_QUOTA_ENDPOINT, {"project": project_id})
+            now = datetime.now(timezone.utc)
+            for b in uq_resp.get("buckets", []):
+                mid = b.get("modelId", "").lower()
+                rem = b.get("remainingFraction")
+                rst = b.get("resetTime")
+                if rem is None or rst is None:
+                    continue
+                rem_val = float(rem)
+                rst_dt = parse_iso_utc(rst)
+                # Short window resets in <= 6 hours (e.g. 5-hour quota)
+                is_short = rst_dt is not None and (rst_dt - now).total_seconds() <= 6 * 3600
+
+                if "gemini" in mid:
+                    if is_short:
+                        if rem_val < qs.gemini_5h_remaining or qs.gemini_5h_reset is None:
+                            qs.gemini_5h_remaining = rem_val
+                            qs.gemini_5h_reset = rst
+                    else:
+                        if rem_val < qs.gemini_weekly_remaining or qs.gemini_weekly_reset is None:
+                            qs.gemini_weekly_remaining = rem_val
+                            qs.gemini_weekly_reset = rst
+                elif "claude" in mid or "gpt" in mid:
+                    if is_short:
+                        if rem_val < qs.third_party_5h_remaining or qs.third_party_5h_reset is None:
+                            qs.third_party_5h_remaining = rem_val
+                            qs.third_party_5h_reset = rst
+                    else:
+                        if (
+                            rem_val < qs.third_party_weekly_remaining
+                            or qs.third_party_weekly_reset is None
+                        ):
+                            qs.third_party_weekly_remaining = rem_val
+                            qs.third_party_weekly_reset = rst
+        except Exception:
+            logger.debug(
+                "Failed to retrieve user model quota from %s",
+                USER_QUOTA_ENDPOINT,
+                exc_info=True,
+            )
 
         return qs

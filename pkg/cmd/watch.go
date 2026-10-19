@@ -16,19 +16,25 @@ import (
 )
 
 func newWatchCmd() *cobra.Command {
-	return &cobra.Command{
+	var autoPrime bool
+
+	cmd := &cobra.Command{
 		Use:   "watch",
 		Short: "Start the real-time background log watcher and failover daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store := GetStorage()
 			fo := failover.New(store)
 			w := watcher.NewLogWatcher(store, fo, store.GeminiHome)
+			w.AutoPrime = autoPrime
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
 			fmt.Println(color.GreenString("Starting Promux log watcher daemon..."))
 			fmt.Printf("Watching logs in: %s\n", store.GeminiHome)
+			if autoPrime {
+				fmt.Println(color.CyanString("Auto-priming enabled for weekly quota reset."))
+			}
 			fmt.Println("Press Ctrl+C to exit.")
 
 			return w.RunForever(ctx, func(m watcher.LogMatch) {
@@ -37,6 +43,10 @@ func newWatchCmd() *cobra.Command {
 			})
 		},
 	}
+
+	cmd.Flags().BoolVar(&autoPrime, "auto-prime", false, "Automatically prime weekly quota resets in the background")
+
+	return cmd
 }
 
 func timeNow() string {

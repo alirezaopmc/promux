@@ -2,12 +2,15 @@ package watcher
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/alirezaopmc/promux/pkg/failover"
+	"github.com/alirezaopmc/promux/pkg/quota"
 	"github.com/alirezaopmc/promux/pkg/storage"
 )
 
@@ -131,3 +134,105 @@ func TestLogWatcherFailoverIntegration(t *testing.T) {
 		t.Fatalf("expected failover to beta, got %v", state.Active)
 	}
 }
+
+func TestWatcherAutoPrimeConfig(t *testing.T) {
+	w := NewWatcher("/tmp/test", 10*time.Second, true)
+	if !w.AutoPrime {
+		t.Errorf("expected AutoPrime to be true")
+	}
+}
+
+func TestWatcherAutoPrimeLoop(t *testing.T) {
+	origPrime := primeAllEligible
+	origLog := logPrintf
+	defer func() {
+		primeAllEligible = origPrime
+		logPrintf = origLog
+	}()
+
+	var primedCalls int
+	var loggedMessages []string
+
+	primeAllEligible = func(ctx context.Context, store *storage.StorageEngine, cache *quota.QuotaCache, force bool) ([]quota.PrimeResult, error) {
+		primedCalls++
+		return []quota.PrimeResult{
+			{Account: "acc-1", Primed: true},
+			{Account: "acc-2", Primed: false, Reason: "active countdown"},
+		}, nil
+	}
+
+	logPrintf = func(format string, v ...any) {
+		loggedMessages = append(loggedMessages, fmt.Sprintf(format, v...))
+	}
+
+	tmpDir := t.TempDir()
+	promuxDir := filepath.Join(tmpDir, "promux")
+	geminiDir := filepath.Join(tmpDir, "gemini")
+	_ = os.MkdirAll(geminiDir, 0755)
+
+	store := storage.New(promuxDir, geminiDir)
+	_, _ = store.SaveProfile("acc-1", nil, nil, "STANDARD")
+
+	w := NewLogWatcher(store, nil, geminiDir)
+	w.AutoPrime = true
+	w.PollInterval = 20 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		_ = w.RunForever(ctx, nil)
+	}()
+
+	// Wait for tick to execute
+	time.Sleep(80 * time.Millisecond)
+	cancel()
+
+	if primedCalls == 0 {
+		t.Fatal("expected primeAllEligible to be called during auto-prime tick")
+	}
+
+	foundLog := false
+	for _, msg := range loggedMessages {
+		if strings.Contains(msg, "[auto-prime] Primed account acc-1") {
+			foundLog = true
+			break
+		}
+	}
+	if !foundLog {
+		t.Fatalf("expected log '[auto-prime] Primed account acc-1', got: %v", loggedMessages)
+	}
+}
+
+func TestWatcherAutoPrimeDisabled(t *testing.T) {
+	origPrime := primeAllEligible
+	defer func() { primeAllEligible = origPrime }()
+
+	var primedCalls int
+	primeAllEligible = func(ctx context.Context, store *storage.StorageEngine, cache *quota.QuotaCache, force bool) ([]quota.PrimeResult, error) {
+		primedCalls++
+		return nil, nil
+	}
+
+	tmpDir := t.TempDir()
+	store := storage.New(filepath.Join(tmpDir, "promux"), filepath.Join(tmpDir, "gemini"))
+	w := NewLogWatcher(store, nil, tmpDir)
+	w.AutoPrime = false
+	w.PollInterval = 20 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		_ = w.RunForever(ctx, nil)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	if primedCalls != 0 {
+		t.Fatalf("expected primeAllEligible NOT to be called when AutoPrime=false, got %d calls", primedCalls)
+	}
+}
+
+

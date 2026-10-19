@@ -238,3 +238,153 @@ def test_quota_client_fast_abort_on_auth_error(monkeypatch):
     with pytest.raises(urllib.error.HTTPError):
         client._post(LOAD_ENDPOINT, {})
     assert len(calls) == 1
+
+
+def test_quota_client_missing_gemini_fallback_prod(monkeypatch):
+    from promux.constants import CODE_ASSIST_BASE_URL, FALLBACK_CODE_ASSIST_BASE_URL
+
+    client = QuotaClient(token="test_token", base_url=FALLBACK_CODE_ASSIST_BASE_URL)
+
+    daily_summary = {
+        "groups": [
+            {
+                "displayName": "Claude and GPT models",
+                "buckets": [
+                    {
+                        "bucketId": "3p-weekly",
+                        "window": "weekly",
+                        "remainingFraction": 0.002,
+                        "resetTime": "2026-10-19T21:50:22Z",
+                    },
+                    {
+                        "bucketId": "3p-5h",
+                        "window": "5h",
+                        "remainingFraction": 1.0,
+                        "resetTime": "2026-10-16T17:52:10Z",
+                    },
+                ],
+            }
+        ]
+    }
+
+    prod_summary = {
+        "groups": [
+            {
+                "displayName": "Gemini Models",
+                "buckets": [
+                    {
+                        "bucketId": "gemini-weekly",
+                        "window": "weekly",
+                        "remainingFraction": 0.919,
+                        "resetTime": "2026-10-19T21:50:41Z",
+                    },
+                    {
+                        "bucketId": "gemini-5h",
+                        "window": "5h",
+                        "remainingFraction": 1.0,
+                        "resetTime": "2026-10-16T17:52:10Z",
+                    },
+                ],
+            },
+            daily_summary["groups"][0],
+        ]
+    }
+
+    called_urls = []
+
+    def mock_post(endpoint, payload, base_url=None):
+        target_base = base_url or client.base_url
+        full = f"{target_base}{endpoint}"
+        called_urls.append(full)
+        if target_base == FALLBACK_CODE_ASSIST_BASE_URL:
+            if "retrieveUserQuotaSummary" in endpoint:
+                return daily_summary
+            return {}
+        if target_base == CODE_ASSIST_BASE_URL:
+            if "retrieveUserQuotaSummary" in endpoint:
+                return prod_summary
+            return {}
+        return {}
+
+    monkeypatch.setattr(client, "_post", mock_post)
+
+    qs = client.get_quota("test-proj")
+    assert qs.gemini_weekly_remaining == 0.919
+    assert qs.gemini_weekly_reset == "2026-10-19T21:50:41Z"
+    assert qs.gemini_5h_remaining == 1.0
+    assert qs.third_party_weekly_remaining == 0.002
+    assert any(CODE_ASSIST_BASE_URL in u for u in called_urls)
+
+
+def test_quota_client_enriches_from_retrieve_user_quota(monkeypatch):
+    from promux.constants import FALLBACK_CODE_ASSIST_BASE_URL
+
+    client = QuotaClient(token="test_token", base_url=FALLBACK_CODE_ASSIST_BASE_URL)
+
+    summary_resp = {
+        "groups": [
+            {
+                "displayName": "Claude and GPT models",
+                "buckets": [
+                    {
+                        "bucketId": "3p-weekly",
+                        "window": "weekly",
+                        "remainingFraction": 0.5,
+                        "resetTime": "2026-10-19T21:50:22Z",
+                    }
+                ],
+            }
+        ]
+    }
+
+    user_quota_resp = {
+        "buckets": [
+            {
+                "tokenType": "WTUS",
+                "modelId": "gemini-2.5-pro",
+                "remainingFraction": 0.834,
+                "resetTime": "2026-10-16T16:08:03Z",
+            },
+            {
+                "tokenType": "WTUS",
+                "modelId": "gemini-2.5-flash",
+                "remainingFraction": 0.834,
+                "resetTime": "2026-10-16T16:08:03Z",
+            },
+        ]
+    }
+
+    def mock_post(endpoint, payload, base_url=None):
+        if "retrieveUserQuotaSummary" in endpoint:
+            return summary_resp
+        if "retrieveUserQuota" in endpoint:
+            return user_quota_resp
+        return {}
+
+    monkeypatch.setattr(client, "_post", mock_post)
+
+    qs = client.get_quota("test-proj")
+    assert qs.gemini_5h_remaining == 0.834
+    assert qs.gemini_5h_reset == "2026-10-16T16:08:03Z"
+
+
+def test_quota_client_post_fallback_when_primary_is_daily(monkeypatch):
+    from promux.constants import CODE_ASSIST_BASE_URL, FALLBACK_CODE_ASSIST_BASE_URL, LOAD_ENDPOINT
+
+    client = QuotaClient(token="test_token", base_url=FALLBACK_CODE_ASSIST_BASE_URL)
+    requested_urls = []
+
+    def mock_urlopen(req, timeout=None):
+        requested_urls.append(req.full_url)
+        if FALLBACK_CODE_ASSIST_BASE_URL in req.full_url:
+            raise urllib.error.HTTPError(req.full_url, 503, "Service Unavailable", {}, None)
+        return MockHttpResponse(b'{"fallback": "success"}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    resp = client._post(LOAD_ENDPOINT, {})
+    assert resp == {"fallback": "success"}
+    assert len(requested_urls) == 2
+    assert requested_urls[0] == f"{FALLBACK_CODE_ASSIST_BASE_URL}{LOAD_ENDPOINT}"
+    assert requested_urls[1] == f"{CODE_ASSIST_BASE_URL}{LOAD_ENDPOINT}"
+
