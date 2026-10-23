@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-10-23
+
+### Fixed
+- **Gemini Live Quota Calculation**: Resolved issue where Gemini models always showed 100% available quota by integrating Google's `/v1internal:retrieveUserQuota` endpoint to enrich real-time per-model bucket consumption (`pkg/quota/client.go`).
+- **Watcher Goroutine Synchronization**: Fixed race condition in log watcher auto-prime test loops ensuring clean shutdown and test isolation (`pkg/watcher/watcher_test.go`).
+
+### Changed
+- **Pure Go Architecture**: Completely removed legacy Python source code, packaging manifests, tests, and toolchain configurations; Promux is now a 100% standalone Go project.
+- **CI/CD & Security Workflows**: Upgraded GitHub Actions CI to test across Go 1.24–1.26 on Ubuntu, macOS, and Windows with race detection and cross-compilation; updated CodeQL to analyze Go.
+- **Documentation**: Updated all repository guides (`AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `SPEC.md`) for Go-native development and usage.
+
 ## [1.0.0] - 2026-10-16
 
 ### Added

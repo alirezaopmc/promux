@@ -58,8 +58,8 @@ func TestE2E_CLIVersion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(out, "promux version 1.0.0") {
-			t.Fatalf("expected version output to contain 'promux version 1.0.0', got: %q", out)
+		if !strings.Contains(out, "promux version "+Version) {
+			t.Fatalf("expected version output to contain 'promux version %s', got: %q", Version, out)
 		}
 	})
 
@@ -72,8 +72,8 @@ func TestE2E_CLIVersion(t *testing.T) {
 		if err := json.Unmarshal([]byte(out), &res); err != nil {
 			t.Fatalf("failed to parse JSON output: %v (raw: %q)", err, out)
 		}
-		if res["version"] != "1.0.0" {
-			t.Fatalf("expected version 1.0.0, got: %s", res["version"])
+		if res["version"] != Version {
+			t.Fatalf("expected version %s, got: %s", Version, res["version"])
 		}
 	})
 
@@ -86,8 +86,8 @@ func TestE2E_CLIVersion(t *testing.T) {
 		if err := json.Unmarshal([]byte(out), &res); err != nil {
 			t.Fatalf("failed to parse JSON output: %v (raw: %q)", err, out)
 		}
-		if res["version"] != "1.0.0" {
-			t.Fatalf("expected version 1.0.0, got: %s", res["version"])
+		if res["version"] != Version {
+			t.Fatalf("expected version %s, got: %s", Version, res["version"])
 		}
 	})
 }

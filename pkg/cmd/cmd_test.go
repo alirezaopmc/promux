@@ -46,8 +46,9 @@ func TestCLIVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version command failed: %v", err)
 	}
-	if out != "promux version 1.0.0\n" {
-		t.Fatalf("unexpected version output: %s", out)
+	expected := "promux version " + Version + "\n"
+	if out != expected {
+		t.Fatalf("unexpected version output: %s, expected %s", out, expected)
 	}
 }
 
