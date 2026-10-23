@@ -1,31 +1,25 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
-
-# Distribution / packaging
+# Binaries and build artifacts
+bin/
 dist/
 build/
-bin/
-*.egg-info/
-.eggs/
-src/promux/_version.py
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
 
-# Testing and coverage
-.pytest_cache/
-.coverage
-htmlcov/
+# Test binaries and coverage
+*.test
+*.out
+coverage.txt
+coverage.html
 
 # Local Promux runtime state
 .promux/
 
-# Virtual environments
-.venv/
-venv/
-ENV/
-
-# Worktrees
+# Worktrees and IDE
 .worktrees/
-
-# Package manager locks
-uv.lock
+.idea/
+.vscode/
+*.swp
+*~

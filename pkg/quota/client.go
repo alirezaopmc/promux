@@ -235,5 +235,98 @@ func (c *QuotaClient) GetQuota(projectID string) (*models.QuotaSummary, error) {
 		}
 	}
 
+	// Query retrieveUserQuota for real-time per-model consumption
+	uqResp, err := c.post(config.UserQuotaEndpoint, map[string]any{"project": projectID})
+	if err == nil && uqResp != nil {
+		if buckets, ok := uqResp["buckets"].([]any); ok {
+			now := time.Now().UTC()
+			for _, b := range buckets {
+				bMap, ok := b.(map[string]any)
+				if !ok {
+					continue
+				}
+				modelID, _ := bMap["modelId"].(string)
+				mid := strings.ToLower(modelID)
+
+				var remVal *float64
+				if rem, exists := bMap["remainingFraction"]; exists {
+					switch v := rem.(type) {
+					case float64:
+						remVal = &v
+					case int:
+						fv := float64(v)
+						remVal = &fv
+					case int64:
+						fv := float64(v)
+						remVal = &fv
+					case json.Number:
+						if f, err := v.Float64(); err == nil {
+							remVal = &f
+						}
+					}
+				}
+				if remVal == nil {
+					continue
+				}
+
+				var resetStr *string
+				var isShort bool = true
+				if rst, ok := bMap["resetTime"].(string); ok && rst != "" {
+					resetStr = &rst
+					if t, ok := ParseResetTimestamp(rst); ok {
+						diff := t.Sub(now)
+						isShort = diff <= 6*time.Hour
+					}
+				}
+
+				if strings.Contains(mid, "gemini") {
+					if isShort {
+						if *remVal < qs.Gemini5hRemaining || qs.Gemini5hReset == nil {
+							qs.Gemini5hRemaining = *remVal
+							if resetStr != nil {
+								qs.Gemini5hReset = resetStr
+							}
+						}
+					} else {
+						if *remVal < qs.GeminiWeeklyRemaining || qs.GeminiWeeklyReset == nil {
+							qs.GeminiWeeklyRemaining = *remVal
+							if resetStr != nil {
+								qs.GeminiWeeklyReset = resetStr
+							}
+						}
+						if *remVal < qs.Gemini5hRemaining {
+							qs.Gemini5hRemaining = *remVal
+						}
+						if qs.Gemini5hReset == nil && resetStr != nil {
+							qs.Gemini5hReset = resetStr
+						}
+					}
+				} else if strings.Contains(mid, "claude") || strings.Contains(mid, "gpt") {
+					if isShort {
+						if *remVal < qs.ThirdParty5hRemaining || qs.ThirdParty5hReset == nil {
+							qs.ThirdParty5hRemaining = *remVal
+							if resetStr != nil {
+								qs.ThirdParty5hReset = resetStr
+							}
+						}
+					} else {
+						if *remVal < qs.ThirdPartyWeeklyRemaining || qs.ThirdPartyWeeklyReset == nil {
+							qs.ThirdPartyWeeklyRemaining = *remVal
+							if resetStr != nil {
+								qs.ThirdPartyWeeklyReset = resetStr
+							}
+						}
+						if *remVal < qs.ThirdParty5hRemaining {
+							qs.ThirdParty5hRemaining = *remVal
+						}
+						if qs.ThirdParty5hReset == nil && resetStr != nil {
+							qs.ThirdParty5hReset = resetStr
+						}
+					}
+				}
+			}
+		}
+	}
+
 	return qs, nil
 }

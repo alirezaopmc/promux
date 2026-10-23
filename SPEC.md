@@ -91,7 +91,7 @@ Rather than multiplexing requests across accounts in parallel (which risks telem
 - **Atomic File Swaps**: Metadata state (`state.json`) and live tokens are written to `.tmp` files and committed via POSIX atomic rename (`os.replace`).
 
 ### 2.5 Zero External Dependencies
-`promux` is built entirely on the Python 3.10+ Standard Library (`urllib`, `json`, `fcntl`, `argparse`, `dataclasses`, `datetime`, `re`, `shutil`, `pathlib`). It requires zero third-party package dependencies at runtime.
+`promux` is built entirely in Go using the standard library and cross-platform native system calls. It compiles to a standalone static binary requiring zero external runtime dependencies.
 
 ---
 
@@ -338,7 +338,7 @@ The `SmartRotationResult` dataclass extends `RotationResult` with target model a
 | `remove`| `<name>` | None | `vault` | Remove an account from the vault |
 | `watch` | None | `--poll-seconds`, `--cooldown` | `watch` | Start log tailing failover daemon |
 | `completion` | `<shell>`| None | None | Generate bash/zsh autocomplete script |
-| `version` | None | `--json`, `--no-color` | None | Print version, Python, platform, and tool list |
+| `version` | None | `--json`, `--no-color` | None | Print version, platform, and tool list |
 | `help` | `[command]` | `--no-color` | None | Display grouped help or per-subcommand help |
 
 ### 6.3 Color Output & NO_COLOR Contract

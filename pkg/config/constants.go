@@ -21,6 +21,7 @@ const (
 	FallbackCodeAssistBaseURL = "https://daily-cloudcode-pa.googleapis.com"
 	LoadEndpoint              = "/v1internal:loadCodeAssist"
 	QuotaEndpoint             = "/v1internal:retrieveUserQuotaSummary"
+	UserQuotaEndpoint         = "/v1internal:retrieveUserQuota"
 	UserInfoURL               = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 	DefaultOAuthClientID     = "REDACTED_OAUTH_CLIENT_ID"

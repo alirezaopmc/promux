@@ -19,10 +19,10 @@ Steps to reproduce the behavior:
 A clear and concise description of what you expected to happen.
 
 **Environment (please complete the following information):**
- - OS: [e.g. Linux Ubuntu 24.04, macOS Sonoma]
- - Python Version: [e.g. 3.11.4]
+ - OS: [e.g. Linux Ubuntu 24.04, macOS Sonoma, Windows 11]
+ - Promux Version: [e.g. 1.0.0 (`promux version`)]
  - Antigravity CLI Version: [e.g. 2.0]
- - Promux Version: [e.g. 0.1.0]
+ - Go Version (if building from source): [e.g. 1.24]
 
 **Additional context**
 Add any other context about the problem here (e.g. sanitized log output from `~/.gemini/antigravity-cli/cli.log`). Please make sure to NEVER include real OAuth tokens or secrets in issue reports.

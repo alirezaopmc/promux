@@ -36,8 +36,8 @@ func TestAccountState(t *testing.T) {
 	}
 }
 
-func TestJSONCompatibilityWithPythonState(t *testing.T) {
-	pythonJSON := `{
+func TestJSONStateUnmarshal(t *testing.T) {
+	sampleJSON := `{
 		"active": "alpha",
 		"accounts": {
 			"alpha": {
@@ -54,7 +54,7 @@ func TestJSONCompatibilityWithPythonState(t *testing.T) {
 	}`
 
 	var s State
-	if err := json.Unmarshal([]byte(pythonJSON), &s); err != nil {
+	if err := json.Unmarshal([]byte(sampleJSON), &s); err != nil {
 		t.Fatalf("failed to unmarshal state json: %v", err)
 	}
 

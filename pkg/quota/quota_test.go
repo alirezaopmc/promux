@@ -153,3 +153,126 @@ func TestQuotaCache(t *testing.T) {
 		t.Fatalf("expected cache miss after invalidate")
 	}
 }
+
+func TestQuotaClientUserQuotaEnrichment(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1internal:retrieveUserQuotaSummary" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"groups": []any{
+					map[string]any{
+						"displayName": "Claude and GPT models",
+						"buckets": []any{
+							map[string]any{
+								"window":            "5h",
+								"remainingFraction": 1.0,
+							},
+						},
+					},
+				},
+			})
+			return
+		}
+		if r.URL.Path == "/v1internal:retrieveUserQuota" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"buckets": []any{
+					map[string]any{
+						"modelId":           "gemini-2.5-flash",
+						"remainingFraction": 0.85,
+						"resetTime":         time.Now().UTC().Add(3 * time.Hour).Format(time.RFC3339),
+					},
+				},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	client := NewClient("mock-token", mockServer.URL, 5*time.Second)
+	qs, err := client.GetQuota("test-project-123")
+	if err != nil {
+		t.Fatalf("GetQuota failed: %v", err)
+	}
+	if qs.Gemini5hRemaining != 0.85 {
+		t.Fatalf("expected Gemini5hRemaining=0.85, got %f", qs.Gemini5hRemaining)
+	}
+	if qs.Gemini5hReset == nil {
+		t.Fatalf("expected Gemini5hReset to be non-nil")
+	}
+}
+
+func TestQuotaClientUserQuotaWeeklyExhaustion(t *testing.T) {
+	futureWeekly := time.Now().UTC().Add(48 * time.Hour).Format(time.RFC3339)
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1internal:retrieveUserQuotaSummary" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"groups": []any{}})
+			return
+		}
+		if r.URL.Path == "/v1internal:retrieveUserQuota" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"buckets": []any{
+					map[string]any{
+						"modelId":           "gemini-2.5-flash",
+						"remainingFraction": 0.0,
+						"resetTime":         futureWeekly,
+					},
+				},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	client := NewClient("mock-token", mockServer.URL, 5*time.Second)
+	qs, err := client.GetQuota("test-project-123")
+	if err != nil {
+		t.Fatalf("GetQuota failed: %v", err)
+	}
+	if qs.GeminiWeeklyRemaining != 0.0 {
+		t.Fatalf("expected GeminiWeeklyRemaining=0.0, got %f", qs.GeminiWeeklyRemaining)
+	}
+	if qs.Gemini5hRemaining != 0.0 {
+		t.Fatalf("expected Gemini5hRemaining=0.0, got %f", qs.Gemini5hRemaining)
+	}
+	if qs.GeminiWeeklyReset == nil || *qs.GeminiWeeklyReset != futureWeekly {
+		t.Fatalf("expected GeminiWeeklyReset=%s, got %v", futureWeekly, qs.GeminiWeeklyReset)
+	}
+}
+
+func TestQuotaClientUserQuotaMissingResetTime(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1internal:retrieveUserQuotaSummary" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"groups": []any{}})
+			return
+		}
+		if r.URL.Path == "/v1internal:retrieveUserQuota" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"buckets": []any{
+					map[string]any{
+						"modelId":           "gemini-2.5-pro",
+						"remainingFraction": 0.70,
+					},
+				},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	client := NewClient("mock-token", mockServer.URL, 5*time.Second)
+	qs, err := client.GetQuota("test-project-123")
+	if err != nil {
+		t.Fatalf("GetQuota failed: %v", err)
+	}
+	if qs.Gemini5hRemaining != 0.70 {
+		t.Fatalf("expected Gemini5hRemaining=0.70, got %f", qs.Gemini5hRemaining)
+	}
+	if qs.Gemini5hReset != nil {
+		t.Fatalf("expected Gemini5hReset=nil, got %v", qs.Gemini5hReset)
+	}
+}

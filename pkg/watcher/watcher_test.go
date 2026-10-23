@@ -181,13 +181,16 @@ func TestWatcherAutoPrimeLoop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	done := make(chan struct{})
 	go func() {
 		_ = w.RunForever(ctx, nil)
+		close(done)
 	}()
 
 	// Wait for tick to execute
 	time.Sleep(80 * time.Millisecond)
 	cancel()
+	<-done
 
 	if primedCalls == 0 {
 		t.Fatal("expected primeAllEligible to be called during auto-prime tick")
@@ -225,12 +228,15 @@ func TestWatcherAutoPrimeDisabled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	done := make(chan struct{})
 	go func() {
 		_ = w.RunForever(ctx, nil)
+		close(done)
 	}()
 
 	time.Sleep(50 * time.Millisecond)
 	cancel()
+	<-done
 
 	if primedCalls != 0 {
 		t.Fatalf("expected primeAllEligible NOT to be called when AutoPrime=false, got %d calls", primedCalls)
@@ -275,12 +281,25 @@ func TestWatcherAutoPrimeBackoff(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	done := make(chan struct{})
 	go func() {
 		_ = w.RunForever(ctx, nil)
+		close(done)
 	}()
 
 	// Wait for first call to register failure
-	time.Sleep(50 * time.Millisecond)
+	for i := 0; i < 50; i++ {
+		w.mu.Lock()
+		_, ok := w.failedPrimes["exhausted-acct"]
+		w.mu.Unlock()
+		if ok {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	<-done
 
 	w.mu.Lock()
 	failedAt, ok := w.failedPrimes["exhausted-acct"]
@@ -312,8 +331,6 @@ func TestWatcherAutoPrimeBackoff(t *testing.T) {
 	if lastSkipFilter != nil && lastSkipFilter("other-acct") {
 		t.Errorf("expected skipFilter to return false for other-acct")
 	}
-
-	cancel()
 }
 
 

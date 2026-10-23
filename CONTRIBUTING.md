@@ -5,8 +5,8 @@ Thank you for your interest in contributing to Promux! We welcome bug reports, f
 ## Philosophy & Architecture Guidelines
 
 Promux is intentionally designed around these core principles:
-1. **Zero External Runtime Dependencies**: All runtime functionality must rely exclusively on the Python standard library (`fcntl`, `urllib`, `argparse`, `dataclasses`, `pathlib`, `json`, etc.). External dependencies are reserved strictly for development and testing (`pytest`, `pytest-mock`).
-2. **POSIX Safety & Concurrency**: All file mutations touching credentials or state must use atomic writes (`.tmp` + `os.replace`), strict file permissions (`0o600` for tokens, `0o700` for directories), and advisory file locking (`fcntl.flock`).
+1. **Zero External Runtime Dependencies**: Promux is compiled to a standalone static binary with zero external runtime requirements.
+2. **POSIX Safety & Concurrency**: All file mutations touching credentials or state must use atomic writes (`.tmp` + `os.Rename`), strict file permissions (`0600` for tokens, `0700` for directories), and cross-platform advisory file locking (`pkg/lock`).
 3. **Session Continuity**: Never overwrite or disrupt conversations, histories, or project context belonging to the host CLI (`agy`).
 
 ## Development Setup
@@ -17,59 +17,63 @@ Promux is intentionally designed around these core principles:
    cd promux
    ```
 
-2. **Create and activate a virtual environment**:
+2. **Verify Go installation**:
+   Promux requires Go 1.24 or higher:
    ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
+   go version
    ```
 
-3. **Install editable package with development dependencies**:
-
-   ### With pip
+3. **Build the binary**:
    ```bash
-   pip install -e ".[dev]"
+   make build
+   # Or directly:
+   go build -ldflags="-s -w" -o bin/promux ./cmd/promux
    ```
 
-   ### With uv
+4. **Install locally** (optional):
    ```bash
-   uv pip install -e ".[dev]"
-   # or
-   uv sync --extra dev
+   make install
+   # Installs to ~/.local/bin/promux
    ```
 
 ## Running Tests
 
-Run the full test suite using `pytest`:
+Run the full test suite with the race detector enabled:
 ```bash
-pytest -v
+make test
+# Or directly:
+go test -v -race ./...
 ```
 
-Run focused tests for specific modules:
+Run static analysis:
 ```bash
-pytest tests/test_lock.py -v
-pytest tests/test_storage.py -v
-pytest tests/test_quota.py -v
-pytest tests/test_failover.py -v
-pytest tests/test_watch.py -v
-pytest tests/test_cli.py -v
-pytest tests/test_completion.py -v
+make vet
+# Or directly:
+go vet ./...
+```
+
+Run focused tests for specific packages:
+```bash
+go test -v -race ./pkg/lock/...
+go test -v -race ./pkg/storage/...
+go test -v -race ./pkg/quota/...
+go test -v -race ./pkg/failover/...
+go test -v -race ./pkg/watcher/...
+go test -v -race ./pkg/cmd/...
 ```
 
 ### Testing Shell Completion
 
-When making changes to completion scripts or CLI commands, verify shell completions:
+When making changes to commands or flags, verify shell completion generation:
 ```bash
-# Run unit tests for completion generation and CLI command dispatch
-pytest tests/test_completion.py tests/test_cli.py -k "completion" -v
+# Validate bash completion script syntax
+bash -n <(./bin/promux completion bash)
 
-# Validate bash script syntax
-bash -n <(python3 -m promux.cli completion bash)
-
-# Validate zsh script syntax (if zsh is available)
-zsh -n <(python3 -m promux.cli completion zsh)
+# Validate zsh completion script syntax (if zsh is available)
+zsh -n <(./bin/promux completion zsh)
 ```
 
-Before submitting a pull request, ensure all tests pass with zero warnings or failures.
+Before submitting a pull request, ensure all tests pass with zero warnings, errors, or data races.
 
 ## Submitting a Pull Request
 

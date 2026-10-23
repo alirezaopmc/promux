@@ -1,4 +1,4 @@
-.PHONY: build test clean install
+.PHONY: build test vet lint clean install
 
 VERSION ?= 1.0.0
 LDFLAGS = -X github.com/alirezaopmc/promux/pkg/cmd.Version=$(VERSION)
@@ -9,6 +9,11 @@ build:
 
 test:
 	go test -v -race ./...
+
+vet:
+	go vet ./...
+
+lint: vet
 
 clean:
 	rm -rf bin/

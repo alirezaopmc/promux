@@ -17,7 +17,7 @@ Operating as a zero-intrusion filesystem overlay, `promux` keeps your active con
 
 ## ⚡ Highlights
 
-- **Standalone Single Binary (6.8 MB):** Statically compiled Go executable with zero external runtime dependencies. No Python interpreter, Node.js runtime, or shared C libraries required.
+- **Standalone Single Binary (6.8 MB):** Statically compiled Go executable with zero external runtime dependencies. No external interpreter, runtime, or shared C libraries required.
 - **Ultra-Low Latency (~5ms Startup):** Sub-millisecond locking and instantaneous CLI dispatch—ideal for interactive shell sessions, terminal wrappers, and high-frequency background daemons.
 - **Autonomous PTY Runner (`promux run`):** Spawns your AI CLI tool inside an interactive pseudo-terminal, scans terminal output in real time for quota limits (`429 RESOURCE_EXHAUSTED`, `Individual quota reached`), atomically hot-swaps to an eligible standby profile, and automatically injects `'continue'` keystrokes so work resumes without human intervention.
 - **Multi-Tool Profile Management:** Unified profile vault architecture managing credentials across Antigravity CLI (`agy`), Claude Code (`claude`), Codex CLI (`codex`), and Cursor CLI (`cursor`).
@@ -28,7 +28,7 @@ Operating as a zero-intrusion filesystem overlay, `promux` keeps your active con
 - **Dual-Loop Failover Protection:**
   - *Proactive Loop:* Live API quota inspection to anticipate exhaustion and rotate accounts based on available capacity.
   - *Reactive Loop:* Real-time background daemon (`promux watch`) and interactive runner (`promux run`) monitoring logs and terminal output for instant failover upon hitting quota walls.
-- **Full Backward Compatibility:** 100% drop-in compatibility with existing `~/.promux` vaults, configuration files, and `state.json` formats from the original Python implementation.
+- **Full Backward Compatibility:** 100% drop-in compatibility with existing `~/.promux` vaults, configuration files, and `state.json` formats.
 
 ---
 
@@ -140,18 +140,6 @@ curl -L -o promux https://github.com/alirezaopmc/promux/releases/latest/download
 chmod +x promux
 mv promux ~/.local/bin/
 ```
-
-### Option 4: Python Legacy Installation (Historical Reference)
-
-Promux was originally authored as a zero-dependency Python tool and has since evolved into this high-performance Go native binary. For users maintaining legacy Python environments, the Python package remains compatible:
-
-```bash
-pipx install promux
-# Or for local development:
-pip install -e ".[dev]"
-```
-
-*Note: The Go binary is a 100% drop-in replacement that natively reads, writes, and locks existing `~/.promux` accounts and `state.json` without requiring any migration.*
 
 ---
 
@@ -464,14 +452,14 @@ promux version --json
 
 ## ⚡ High-Performance Native Engine
 
-Promux was re-engineered in Go to eliminate runtime startup lag and deliver rock-solid reliability across operating systems.
+Promux is engineered in Go to eliminate runtime startup lag and deliver rock-solid reliability across operating systems.
 
-| Metric | Promux (Go Native) | Python Implementation | Node.js / TypeScript |
+| Metric | Promux (Go Native) | Interpreted Scripts | Node.js / TypeScript |
 |---|---|---|---|
 | **Startup Latency** | **~5 ms** | ~85 ms | ~180 ms |
-| **Binary Footprint** | **6.8 MB** (single binary) | Requires Python 3.10+ runtime | Requires Node.js + `node_modules` |
-| **Dependencies** | **Zero runtime dependencies** | Python standard library | NPM package dependencies |
-| **Locking Mechanism** | OS-level `flock` / `LockFileEx` | POSIX `fcntl` / `msvcrt` | Platform-dependent file locking |
+| **Binary Footprint** | **6.8 MB** (single binary) | Requires system interpreter | Requires Node.js + `node_modules` |
+| **Dependencies** | **Zero runtime dependencies** | Interpreter standard library | NPM package dependencies |
+| **Locking Mechanism** | OS-level `flock` / `LockFileEx` | Platform locking wrapper | Platform-dependent file locking |
 | **Execution Wrapper** | Native Unix PTY / Windows Pipes | Subprocess pipe interception | Node child_process wrapper |
 
 ---
@@ -540,20 +528,18 @@ systemctl --user status promux.service
 
 ## 🧪 Testing & Development
 
-### Go Test Suite (Primary)
-Run all Go unit, integration, and race detection tests:
+Run all unit, integration, and race detection tests:
 ```bash
 make test
 # Or directly:
 go test -v -race ./...
 ```
 
-### Python Legacy Test Suite (Validation)
-To verify backwards compatibility with the Python reference implementation:
+Run static analysis:
 ```bash
-pytest -v
-ruff check src tests
-mypy src
+make vet
+# Or directly:
+go vet ./...
 ```
 
 ---
