@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-10-24
+
+### Fixed
+- **Gemini Weekly Quota Display**: Resolved issue where Gemini models misleadingly displayed `100.0%` with no countdown across profiles; standard/free accounts do not enforce a weekly Gemini quota, so the table and detail outputs now cleanly display `-` per specification (`pkg/cmd/quota.go`).
+- **Claude 5-Hour Quota Clobbering**: Fixed bug in `GetQuota` where multi-day Claude/GPT model resets returned from `/v1internal:retrieveUserQuota` overwrote `ThirdParty5hRemaining` and `ThirdParty5hReset` with weekly values (`pkg/quota/client.go`).
+- **Gemini Daily Exhaustion Window**: Corrected quota window classification so 24-hour rate limit exhaustion is attributed to the 5-hour/daily limit window rather than being misclassified as a weekly reset (`pkg/quota/client.go`).
+- **Weekly Quota Priming Reset Capture**: Fixed `PrimeAccount` to capture `ThirdPartyWeeklyReset` when priming with default model turns (`pkg/quota/prime.go`).
+- **Overview Table Formatting**: Formatted missing timestamps as `100.0% (-)` per `SPEC.md §5.1` (`pkg/cmd/quota.go`).
+
 ## [1.1.0] - 2026-10-23
 
 ### Fixed
