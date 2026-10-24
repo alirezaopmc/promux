@@ -116,7 +116,7 @@ func IsEligibleForPrime(qs *models.QuotaSummary, now time.Time, force bool) (boo
 		return true, "weekly reset reached"
 	}
 
-	if qs.GeminiWeeklyRemaining >= 1.0 {
+	if qs.GeminiWeeklyRemaining >= 1.0 || qs.ThirdPartyWeeklyRemaining >= 1.0 {
 		return true, "weekly reset floating at 100%"
 	}
 
@@ -268,7 +268,11 @@ func PrimeAccount(ctx context.Context, store *storage.StorageEngine, cache *Quot
 	if err != nil {
 		result.Error = fmt.Sprintf("primed successfully, but failed to refresh quota: %v", err)
 	} else if newQs != nil {
-		result.NewReset = newQs.GeminiWeeklyReset
+		if newQs.GeminiWeeklyReset != nil {
+			result.NewReset = newQs.GeminiWeeklyReset
+		} else {
+			result.NewReset = newQs.ThirdPartyWeeklyReset
+		}
 		if cache != nil {
 			_ = cache.Set(accountName, newQs)
 		}

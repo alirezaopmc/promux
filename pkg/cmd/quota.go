@@ -335,7 +335,10 @@ func listAllQuotas(out io.Writer, store *storage.StorageEngine, cache *quota.Quo
 		}
 
 		g5 := formatOverviewCell(res.qs.Gemini5hRemaining, res.qs.Gemini5hReset, now)
-		gw := formatOverviewCell(res.qs.GeminiWeeklyRemaining, res.qs.GeminiWeeklyReset, now)
+		gw := "-"
+		if res.qs.GeminiWeeklyReset != nil {
+			gw = formatOverviewCell(res.qs.GeminiWeeklyRemaining, res.qs.GeminiWeeklyReset, now)
+		}
 		c5 := formatOverviewCell(res.qs.ThirdParty5hRemaining, res.qs.ThirdParty5hReset, now)
 		cw := formatOverviewCell(res.qs.ThirdPartyWeeklyRemaining, res.qs.ThirdPartyWeeklyReset, now)
 
@@ -367,7 +370,7 @@ func formatOverviewCell(fraction float64, resetStr *string, now time.Time) strin
 		}
 	}
 
-	return pct
+	return fmt.Sprintf("%s (-)", pct)
 }
 
 func formatResetRelative(resetStr *string, now time.Time) string {
@@ -399,15 +402,22 @@ func printQuota(w io.Writer, name string, qs *models.QuotaSummary) {
 
 		if resetStr != nil && *resetStr != "" {
 			if t, ok := quota.ParseResetTimestamp(*resetStr); ok {
-				return fmt.Sprintf("%s (resets in %s)", pct, quota.FormatResetDuration(t, now))
+				dur := quota.FormatResetDuration(t, now)
+				if dur != "" && dur != "-" && dur != "now" {
+					return fmt.Sprintf("%s (resets in %s)", pct, dur)
+				}
 			}
 		}
-		return pct
+		return fmt.Sprintf("%s (-)", pct)
 	}
 
 	fmt.Fprintln(w, "Gemini Models:")
 	fmt.Fprintf(w, "  • 5-Hour Window: %s\n", formatWindow(qs.Gemini5hRemaining, qs.Gemini5hReset))
-	fmt.Fprintf(w, "  • Weekly Window: %s\n\n", formatWindow(qs.GeminiWeeklyRemaining, qs.GeminiWeeklyReset))
+	if qs.GeminiWeeklyReset != nil {
+		fmt.Fprintf(w, "  • Weekly Window: %s\n\n", formatWindow(qs.GeminiWeeklyRemaining, qs.GeminiWeeklyReset))
+	} else {
+		fmt.Fprintf(w, "  • Weekly Window: -\n\n")
+	}
 
 	fmt.Fprintln(w, "Third-Party Models:")
 	fmt.Fprintf(w, "  • 5-Hour Window: %s\n", formatWindow(qs.ThirdParty5hRemaining, qs.ThirdParty5hReset))

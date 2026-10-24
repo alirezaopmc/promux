@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/alirezaopmc/promux/pkg/models"
 )
 
 var testCLIMu sync.Mutex
@@ -85,5 +89,39 @@ func TestCLIProfileWorkflow(t *testing.T) {
 	out, err = executeCommand("tools")
 	if err != nil {
 		t.Fatalf("tools failed: %v", err)
+	}
+}
+
+func TestFormatOverviewCell(t *testing.T) {
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+
+	// Missing reset timestamp formats as "(-)"
+	res := formatOverviewCell(1.0, nil, now)
+	if !strings.Contains(res, "100.0%") || !strings.Contains(res, "(-)") {
+		t.Fatalf("expected '100.0%% (-)', got %q", res)
+	}
+
+	// Active countdown formats with duration
+	future := now.Add(2 * time.Hour).Format(time.RFC3339)
+	resWithCountdown := formatOverviewCell(0.85, &future, now)
+	if !strings.Contains(resWithCountdown, "85.0%") || !strings.Contains(resWithCountdown, "2h") {
+		t.Fatalf("expected '85.0%% (2h)', got %q", resWithCountdown)
+	}
+}
+
+func TestPrintQuotaGeminiWeeklyDashWhenNil(t *testing.T) {
+	buf := new(bytes.Buffer)
+	qs := models.NewQuotaSummary()
+	qs.Gemini5hRemaining = 0.90
+	qs.GeminiWeeklyReset = nil // no weekly reset for gemini
+
+	printQuota(buf, "test-account", qs)
+	out := buf.String()
+
+	if !strings.Contains(out, "Gemini Models:") {
+		t.Fatalf("expected 'Gemini Models:' in output: %s", out)
+	}
+	if !strings.Contains(out, "• Weekly Window: -") {
+		t.Fatalf("expected '• Weekly Window: -' in output: %s", out)
 	}
 }

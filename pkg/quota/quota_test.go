@@ -276,3 +276,111 @@ func TestQuotaClientUserQuotaMissingResetTime(t *testing.T) {
 		t.Fatalf("expected Gemini5hReset=nil, got %v", qs.Gemini5hReset)
 	}
 }
+
+func TestQuotaClientThirdPartyWeeklyDoesNotClobber5h(t *testing.T) {
+	reset5h := time.Now().UTC().Add(4 * time.Hour).Format(time.RFC3339)
+	resetWeekly := time.Now().UTC().Add(3 * 24 * time.Hour).Format(time.RFC3339)
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1internal:retrieveUserQuotaSummary" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"groups": []any{
+					map[string]any{
+						"displayName": "Claude and GPT models",
+						"buckets": []any{
+							map[string]any{
+								"window":            "5h",
+								"remainingFraction": 1.0,
+								"resetTime":         reset5h,
+							},
+							map[string]any{
+								"window":            "weekly",
+								"remainingFraction": 0.25,
+								"resetTime":         resetWeekly,
+							},
+						},
+					},
+				},
+			})
+			return
+		}
+		if r.URL.Path == "/v1internal:retrieveUserQuota" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"buckets": []any{
+					map[string]any{
+						"modelId":           "claude-sonnet-4-6",
+						"remainingFraction": 0.25,
+						"resetTime":         resetWeekly,
+					},
+				},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	client := NewClient("mock-token", mockServer.URL, 5*time.Second)
+	qs, err := client.GetQuota("test-project-123")
+	if err != nil {
+		t.Fatalf("GetQuota failed: %v", err)
+	}
+
+	// ThirdParty 5h quota should remain 1.0 and reset5h, NOT overwritten by 0.25 and resetWeekly
+	if qs.ThirdParty5hRemaining != 1.0 {
+		t.Fatalf("expected ThirdParty5hRemaining=1.0, got %f", qs.ThirdParty5hRemaining)
+	}
+	if qs.ThirdParty5hReset == nil || *qs.ThirdParty5hReset != reset5h {
+		t.Fatalf("expected ThirdParty5hReset=%s, got %v", reset5h, qs.ThirdParty5hReset)
+	}
+	if qs.ThirdPartyWeeklyRemaining != 0.25 {
+		t.Fatalf("expected ThirdPartyWeeklyRemaining=0.25, got %f", qs.ThirdPartyWeeklyRemaining)
+	}
+	if qs.ThirdPartyWeeklyReset == nil || *qs.ThirdPartyWeeklyReset != resetWeekly {
+		t.Fatalf("expected ThirdPartyWeeklyReset=%s, got %v", resetWeekly, qs.ThirdPartyWeeklyReset)
+	}
+}
+
+func TestQuotaClientGeminiDailyExhaustion(t *testing.T) {
+	reset22h := time.Now().UTC().Add(22 * time.Hour).Format(time.RFC3339)
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1internal:retrieveUserQuotaSummary" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"groups": []any{}})
+			return
+		}
+		if r.URL.Path == "/v1internal:retrieveUserQuota" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"buckets": []any{
+					map[string]any{
+						"modelId":           "gemini-2.5-flash",
+						"remainingFraction": 0.0,
+						"resetTime":         reset22h,
+					},
+				},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	client := NewClient("mock-token", mockServer.URL, 5*time.Second)
+	qs, err := client.GetQuota("test-project-123")
+	if err != nil {
+		t.Fatalf("GetQuota failed: %v", err)
+	}
+
+	// 22-hour exhaustion applies to 5-hour/daily limit, NOT weekly reset
+	if qs.Gemini5hRemaining != 0.0 {
+		t.Fatalf("expected Gemini5hRemaining=0.0, got %f", qs.Gemini5hRemaining)
+	}
+	if qs.Gemini5hReset == nil || *qs.Gemini5hReset != reset22h {
+		t.Fatalf("expected Gemini5hReset=%s, got %v", reset22h, qs.Gemini5hReset)
+	}
+	if qs.GeminiWeeklyReset != nil {
+		t.Fatalf("expected GeminiWeeklyReset=nil, got %v", qs.GeminiWeeklyReset)
+	}
+}

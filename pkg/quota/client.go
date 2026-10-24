@@ -280,7 +280,17 @@ func (c *QuotaClient) GetQuota(projectID string) (*models.QuotaSummary, error) {
 				}
 
 				if strings.Contains(mid, "gemini") {
-					if isShort {
+					var diff time.Duration
+					hasDiff := false
+					if resetStr != nil {
+						if t, ok := ParseResetTimestamp(*resetStr); ok {
+							diff = t.Sub(now)
+							hasDiff = true
+						}
+					}
+
+					// Resets within 24 hours reflect the 5-hour rolling limit or daily exhaustion cooldown
+					if !hasDiff || diff <= 24*time.Hour {
 						if *remVal < qs.Gemini5hRemaining || qs.Gemini5hReset == nil {
 							qs.Gemini5hRemaining = *remVal
 							if resetStr != nil {
@@ -288,6 +298,7 @@ func (c *QuotaClient) GetQuota(projectID string) (*models.QuotaSummary, error) {
 							}
 						}
 					} else {
+						// Multi-day reset (> 24 hours) indicates weekly window
 						if *remVal < qs.GeminiWeeklyRemaining || qs.GeminiWeeklyReset == nil {
 							qs.GeminiWeeklyRemaining = *remVal
 							if resetStr != nil {
@@ -296,9 +307,6 @@ func (c *QuotaClient) GetQuota(projectID string) (*models.QuotaSummary, error) {
 						}
 						if *remVal < qs.Gemini5hRemaining {
 							qs.Gemini5hRemaining = *remVal
-						}
-						if qs.Gemini5hReset == nil && resetStr != nil {
-							qs.Gemini5hReset = resetStr
 						}
 					}
 				} else if strings.Contains(mid, "claude") || strings.Contains(mid, "gpt") {
@@ -315,12 +323,6 @@ func (c *QuotaClient) GetQuota(projectID string) (*models.QuotaSummary, error) {
 							if resetStr != nil {
 								qs.ThirdPartyWeeklyReset = resetStr
 							}
-						}
-						if *remVal < qs.ThirdParty5hRemaining {
-							qs.ThirdParty5hRemaining = *remVal
-						}
-						if qs.ThirdParty5hReset == nil && resetStr != nil {
-							qs.ThirdParty5hReset = resetStr
 						}
 					}
 				}
