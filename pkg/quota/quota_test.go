@@ -398,24 +398,10 @@ func TestQuotaClientSymmetricFallback_FromDailyToProd(t *testing.T) {
 	dailyHits := 0
 	prodHits := 0
 
-	prodServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		prodHits++
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"source": "prod"})
-	}))
-	defer prodServer.Close()
-
-	dailyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		dailyHits++
-		http.Error(w, "daily down", http.StatusServiceUnavailable)
-	}))
-	defer dailyServer.Close()
-
-	// Use helper with custom prod/daily mapping
-	_ = NewClient("mock-token", dailyServer.URL, 5*time.Second)
-	// Override urls generator for test
-	urls := getCandidateURLsWithDefaults(dailyServer.URL, "/test", prodServer.URL, dailyServer.URL)
-	if len(urls) != 2 || urls[0] != dailyServer.URL+"/test" || urls[1] != prodServer.URL+"/test" {
+	prodURL := "https://prod.example.com"
+	dailyURL := "https://daily.example.com"
+	urls := getCandidateURLsWithDefaults(dailyURL, "/test", prodURL, dailyURL)
+	if len(urls) != 2 || urls[0] != dailyURL+"/test" || urls[1] != prodURL+"/test" {
 		t.Fatalf("unexpected candidate urls: %v", urls)
 	}
 
@@ -493,24 +479,7 @@ func TestQuotaClientSymmetricFallback_FromProdToDaily(t *testing.T) {
 }
 
 func TestQuotaClientSymmetricFallback_Execution(t *testing.T) {
-	primaryHits := 0
-	fallbackHits := 0
-
-	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fallbackHits++
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"result": "ok"})
-	}))
-	defer fallbackServer.Close()
-
-	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		primaryHits++
-		http.Error(w, "temporary outage", http.StatusBadGateway)
-	}))
-	defer primaryServer.Close()
-
-	// Client targeting primaryServer URL directly
-	client := NewClient("mock-token", primaryServer.URL, 5*time.Second)
+	client := NewClient("mock-token", "https://custom.example.com", 5*time.Second)
 
 	// Test candidate url resolution
 	candidates := client.candidateURLs("/v1internal:loadCodeAssist")
@@ -520,32 +489,23 @@ func TestQuotaClientSymmetricFallback_Execution(t *testing.T) {
 }
 
 func TestQuotaClientSymmetricFallback_AuthErrorsDoNotFallback(t *testing.T) {
-	primaryHits := 0
-	fallbackHits := 0
+	requestCount := 0
+	client := NewClient("mock-token", config.FallbackCodeAssistBaseURL, 5*time.Second)
+	client.HTTPClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestCount++
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Body:       io.NopCloser(strings.NewReader("unauthorized")),
+			Header:     make(http.Header),
+		}, nil
+	})
 
-	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fallbackHits++
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"result": "ok"})
-	}))
-	defer fallbackServer.Close()
-
-	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		primaryHits++
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-	}))
-	defer primaryServer.Close()
-
-	client := NewClient("mock-token", primaryServer.URL, 5*time.Second)
 	_, err := client.post("/test", map[string]any{})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if primaryHits != 1 {
-		t.Fatalf("expected primary to be hit once, got %d", primaryHits)
-	}
-	if fallbackHits != 0 {
-		t.Fatalf("expected fallback to not be hit, got %d", fallbackHits)
+	if requestCount != 1 {
+		t.Fatalf("expected exactly 1 request before short-circuiting, got %d", requestCount)
 	}
 }
 
