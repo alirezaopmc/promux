@@ -347,9 +347,6 @@ func (c *QuotaClient) GetQuota(projectID string) (*models.QuotaSummary, error) {
 								qs.GeminiWeeklyReset = resetStr
 							}
 						}
-						if *remVal < qs.Gemini5hRemaining {
-							qs.Gemini5hRemaining = *remVal
-						}
 					}
 				} else if strings.Contains(mid, "claude") || strings.Contains(mid, "gpt") {
 					if isShort {

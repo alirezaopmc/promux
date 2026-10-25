@@ -237,8 +237,8 @@ func TestQuotaClientUserQuotaWeeklyExhaustion(t *testing.T) {
 	if qs.GeminiWeeklyRemaining != 0.0 {
 		t.Fatalf("expected GeminiWeeklyRemaining=0.0, got %f", qs.GeminiWeeklyRemaining)
 	}
-	if qs.Gemini5hRemaining != 0.0 {
-		t.Fatalf("expected Gemini5hRemaining=0.0, got %f", qs.Gemini5hRemaining)
+	if qs.Gemini5hRemaining != 1.0 {
+		t.Fatalf("expected Gemini5hRemaining=1.0, got %f", qs.Gemini5hRemaining)
 	}
 	if qs.GeminiWeeklyReset == nil || *qs.GeminiWeeklyReset != futureWeekly {
 		t.Fatalf("expected GeminiWeeklyReset=%s, got %v", futureWeekly, qs.GeminiWeeklyReset)
@@ -546,5 +546,53 @@ func TestQuotaClientSymmetricFallback_AuthErrorsDoNotFallback(t *testing.T) {
 	}
 	if fallbackHits != 0 {
 		t.Fatalf("expected fallback to not be hit, got %d", fallbackHits)
+	}
+}
+
+func TestQuotaClientGeminiWeeklyDoesNotClobber5h(t *testing.T) {
+	resetWeekly := time.Now().UTC().Add(6 * 24 * time.Hour).Format(time.RFC3339)
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1internal:retrieveUserQuotaSummary" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"groups": []any{}})
+			return
+		}
+		if r.URL.Path == "/v1internal:retrieveUserQuota" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"buckets": []any{
+					map[string]any{
+						"modelId":           "gemini-2.5-flash",
+						"remainingFraction": 0.388,
+						"resetTime":         resetWeekly,
+					},
+				},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	client := NewClient("mock-token", mockServer.URL, 5*time.Second)
+	qs, err := client.GetQuota("test-project-123")
+	if err != nil {
+		t.Fatalf("GetQuota failed: %v", err)
+	}
+
+	// 5h remaining must remain 1.0 (unclobbered) and Gemini5hReset must remain nil
+	if qs.Gemini5hRemaining != 1.0 {
+		t.Fatalf("expected Gemini5hRemaining=1.0, got %f", qs.Gemini5hRemaining)
+	}
+	if qs.Gemini5hReset != nil {
+		t.Fatalf("expected Gemini5hReset=nil, got %v", qs.Gemini5hReset)
+	}
+
+	// Weekly remaining must reflect 0.388 and resetWeekly
+	if qs.GeminiWeeklyRemaining != 0.388 {
+		t.Fatalf("expected GeminiWeeklyRemaining=0.388, got %f", qs.GeminiWeeklyRemaining)
+	}
+	if qs.GeminiWeeklyReset == nil || *qs.GeminiWeeklyReset != resetWeekly {
+		t.Fatalf("expected GeminiWeeklyReset=%s, got %v", resetWeekly, qs.GeminiWeeklyReset)
 	}
 }
