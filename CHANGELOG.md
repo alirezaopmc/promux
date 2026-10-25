@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-10-25
+
+### Fixed
+- **Symmetric Multi-Tier URL Fallback**: Implemented symmetric peer URL fallback in `QuotaClient.post()` between `daily-cloudcode-pa.googleapis.com` and production `cloudcode-pa.googleapis.com`, eliminating single-endpoint brittleness when `daily` is auto-detected from CLI logs (`pkg/quota/client.go`).
+- **Gemini 5-Hour Window Clamping**: Resolved bug where accounts with multi-day Gemini weekly limits (resets > 24h) clobbered `Gemini5hRemaining` down to the weekly remaining fraction without setting a reset timestamp (`pkg/quota/client.go`).
+- **Fatal Error Fast Short-Circuiting**: Terminated candidate endpoint retry loops immediately on HTTP 401 Unauthorized and 403 Forbidden responses to avoid redundant requests with invalid credentials (`pkg/quota/client.go`).
+- **Test Hermeticity**: Refactored URL fallback unit tests to utilize `roundTripFunc` transport mocks, preventing external socket binds and potential outbound network leakage (`pkg/quota/quota_test.go`).
+
 ## [1.1.1] - 2026-10-24
 
 ### Fixed

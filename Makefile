@@ -1,6 +1,6 @@
 .PHONY: build test vet lint clean install
 
-VERSION ?= 1.1.1
+VERSION ?= 1.1.2
 LDFLAGS = -X github.com/alirezaopmc/promux/pkg/cmd.Version=$(VERSION)
 
 build:

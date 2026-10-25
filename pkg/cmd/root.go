@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	Version   = "1.1.1"
+	Version   = "1.1.2"
 	ToolName  = "agy"
 	JSONOut   = false
 	DebugMode = false
