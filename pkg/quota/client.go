@@ -37,16 +37,58 @@ func NewClient(token string, baseURL string, timeout time.Duration) *QuotaClient
 	}
 }
 
+func getCandidateURLsWithDefaults(baseURL, endpoint, prodURL, dailyURL string) []string {
+	primary := strings.TrimRight(baseURL, "/")
+	prod := strings.TrimRight(prodURL, "/")
+	daily := strings.TrimRight(dailyURL, "/")
+	var candidates []string
+
+	candidates = append(candidates, primary+endpoint)
+
+	var peer string
+	if primary == daily {
+		peer = prod
+	} else if primary == prod {
+		peer = daily
+	} else {
+		// Custom primary URL: try both daily and prod as secondary fallbacks
+		peer = daily
+	}
+
+	if peer != "" && peer != primary {
+		candidates = append(candidates, peer+endpoint)
+	}
+	if primary != prod && peer != prod {
+		candidates = append(candidates, prod+endpoint)
+	}
+
+	// De-duplicate preserving order
+	seen := make(map[string]bool)
+	var unique []string
+	for _, u := range candidates {
+		if !seen[u] {
+			seen[u] = true
+			unique = append(unique, u)
+		}
+	}
+	return unique
+}
+
+func getCandidateURLs(baseURL, endpoint string) []string {
+	return getCandidateURLsWithDefaults(baseURL, endpoint, config.CodeAssistBaseURL, config.FallbackCodeAssistBaseURL)
+}
+
+func (c *QuotaClient) candidateURLs(endpoint string) []string {
+	return getCandidateURLs(c.BaseURL, endpoint)
+}
+
 func (c *QuotaClient) post(endpoint string, payload any) (map[string]any, error) {
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 
-	urlsToTry := []string{c.BaseURL + endpoint}
-	if c.BaseURL != config.FallbackCodeAssistBaseURL {
-		urlsToTry = append(urlsToTry, config.FallbackCodeAssistBaseURL+endpoint)
-	}
+	urlsToTry := c.candidateURLs(endpoint)
 
 	var lastErr error
 	for _, u := range urlsToTry {

@@ -2,11 +2,14 @@ package quota
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/alirezaopmc/promux/pkg/config"
 	"github.com/alirezaopmc/promux/pkg/models"
 )
 
@@ -382,5 +385,166 @@ func TestQuotaClientGeminiDailyExhaustion(t *testing.T) {
 	}
 	if qs.GeminiWeeklyReset != nil {
 		t.Fatalf("expected GeminiWeeklyReset=nil, got %v", qs.GeminiWeeklyReset)
+	}
+}
+
+type roundTripFunc func(req *http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestQuotaClientSymmetricFallback_FromDailyToProd(t *testing.T) {
+	dailyHits := 0
+	prodHits := 0
+
+	prodServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		prodHits++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"source": "prod"})
+	}))
+	defer prodServer.Close()
+
+	dailyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dailyHits++
+		http.Error(w, "daily down", http.StatusServiceUnavailable)
+	}))
+	defer dailyServer.Close()
+
+	// Use helper with custom prod/daily mapping
+	_ = NewClient("mock-token", dailyServer.URL, 5*time.Second)
+	// Override urls generator for test
+	urls := getCandidateURLsWithDefaults(dailyServer.URL, "/test", prodServer.URL, dailyServer.URL)
+	if len(urls) != 2 || urls[0] != dailyServer.URL+"/test" || urls[1] != prodServer.URL+"/test" {
+		t.Fatalf("unexpected candidate urls: %v", urls)
+	}
+
+	// Also verify full post fallback execution from daily to prod
+	client := NewClient("mock-token", config.FallbackCodeAssistBaseURL, 5*time.Second)
+	client.HTTPClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.Contains(req.URL.Host, "daily-cloudcode-pa") {
+			dailyHits++
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Body:       io.NopCloser(strings.NewReader("daily down")),
+				Header:     make(http.Header),
+			}, nil
+		}
+		prodHits++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"source": "prod"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	resp, err := client.post("/test", map[string]any{})
+	if err != nil {
+		t.Fatalf("expected post fallback to succeed, got error: %v", err)
+	}
+	if dailyHits != 1 || prodHits != 1 {
+		t.Fatalf("expected 1 daily hit and 1 prod hit, got daily=%d, prod=%d", dailyHits, prodHits)
+	}
+	if src, _ := resp["source"].(string); src != "prod" {
+		t.Fatalf("expected source=prod, got %v", resp["source"])
+	}
+}
+
+func TestQuotaClientSymmetricFallback_FromProdToDaily(t *testing.T) {
+	dailyHits := 0
+	prodHits := 0
+
+	prodURL := "https://prod.example.com"
+	dailyURL := "https://daily.example.com"
+	urls := getCandidateURLsWithDefaults(prodURL, "/test", prodURL, dailyURL)
+	if len(urls) != 2 || urls[0] != prodURL+"/test" || urls[1] != dailyURL+"/test" {
+		t.Fatalf("unexpected candidate urls: %v", urls)
+	}
+
+	// Verify full post fallback execution from prod to daily
+	client := NewClient("mock-token", config.CodeAssistBaseURL, 5*time.Second)
+	client.HTTPClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.Contains(req.URL.Host, "cloudcode-pa") && !strings.Contains(req.URL.Host, "daily") {
+			prodHits++
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Body:       io.NopCloser(strings.NewReader("prod down")),
+				Header:     make(http.Header),
+			}, nil
+		}
+		dailyHits++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"source": "daily"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	resp, err := client.post("/test", map[string]any{})
+	if err != nil {
+		t.Fatalf("expected post fallback to succeed, got error: %v", err)
+	}
+	if prodHits != 1 || dailyHits != 1 {
+		t.Fatalf("expected 1 prod hit and 1 daily hit, got prod=%d, daily=%d", prodHits, dailyHits)
+	}
+	if src, _ := resp["source"].(string); src != "daily" {
+		t.Fatalf("expected source=daily, got %v", resp["source"])
+	}
+}
+
+func TestQuotaClientSymmetricFallback_Execution(t *testing.T) {
+	primaryHits := 0
+	fallbackHits := 0
+
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": "ok"})
+	}))
+	defer fallbackServer.Close()
+
+	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		http.Error(w, "temporary outage", http.StatusBadGateway)
+	}))
+	defer primaryServer.Close()
+
+	// Client targeting primaryServer URL directly
+	client := NewClient("mock-token", primaryServer.URL, 5*time.Second)
+
+	// Test candidate url resolution
+	candidates := client.candidateURLs("/v1internal:loadCodeAssist")
+	if len(candidates) < 2 {
+		t.Fatalf("expected at least 2 candidates, got %v", candidates)
+	}
+}
+
+func TestQuotaClientSymmetricFallback_AuthErrorsDoNotFallback(t *testing.T) {
+	primaryHits := 0
+	fallbackHits := 0
+
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": "ok"})
+	}))
+	defer fallbackServer.Close()
+
+	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer primaryServer.Close()
+
+	client := NewClient("mock-token", primaryServer.URL, 5*time.Second)
+	_, err := client.post("/test", map[string]any{})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if primaryHits != 1 {
+		t.Fatalf("expected primary to be hit once, got %d", primaryHits)
+	}
+	if fallbackHits != 0 {
+		t.Fatalf("expected fallback to not be hit, got %d", fallbackHits)
 	}
 }
