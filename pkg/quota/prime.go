@@ -105,19 +105,26 @@ func IsEligibleForPrime(qs *models.QuotaSummary, now time.Time, force bool) (boo
 	gemActive, gemExpired, gemDur := checkReset(qs.GeminiWeeklyReset)
 	tpActive, tpExpired, tpDur := checkReset(qs.ThirdPartyWeeklyReset)
 
+	if gemExpired || tpExpired {
+		return true, "weekly reset reached"
+	}
+
+	if gemActive && tpActive {
+		return false, fmt.Sprintf("active countdowns (Gemini: %s, Third-party: %s)", gemDur, tpDur)
+	}
+
+	if qs.GeminiWeeklyRemaining >= 1.0 && !gemActive {
+		return true, "weekly reset floating at 100%"
+	}
+	if qs.ThirdPartyWeeklyRemaining >= 1.0 && !tpActive {
+		return true, "weekly reset floating at 100%"
+	}
+
 	if gemActive {
 		return false, fmt.Sprintf("active countdown (%s left)", gemDur)
 	}
 	if tpActive {
 		return false, fmt.Sprintf("active countdown (%s left)", tpDur)
-	}
-
-	if gemExpired || tpExpired {
-		return true, "weekly reset reached"
-	}
-
-	if qs.GeminiWeeklyRemaining >= 1.0 || qs.ThirdPartyWeeklyRemaining >= 1.0 {
-		return true, "weekly reset floating at 100%"
 	}
 
 	return false, "no weekly reset information"

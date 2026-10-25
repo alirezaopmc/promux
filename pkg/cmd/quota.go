@@ -335,10 +335,7 @@ func listAllQuotas(out io.Writer, store *storage.StorageEngine, cache *quota.Quo
 		}
 
 		g5 := formatOverviewCell(res.qs.Gemini5hRemaining, res.qs.Gemini5hReset, now)
-		gw := "-"
-		if res.qs.GeminiWeeklyReset != nil {
-			gw = formatOverviewCell(res.qs.GeminiWeeklyRemaining, res.qs.GeminiWeeklyReset, now)
-		}
+		gw := formatOverviewCell(res.qs.GeminiWeeklyRemaining, res.qs.GeminiWeeklyReset, now)
 		c5 := formatOverviewCell(res.qs.ThirdParty5hRemaining, res.qs.ThirdParty5hReset, now)
 		cw := formatOverviewCell(res.qs.ThirdPartyWeeklyRemaining, res.qs.ThirdPartyWeeklyReset, now)
 
@@ -413,11 +410,7 @@ func printQuota(w io.Writer, name string, qs *models.QuotaSummary) {
 
 	fmt.Fprintln(w, "Gemini Models:")
 	fmt.Fprintf(w, "  • 5-Hour Window: %s\n", formatWindow(qs.Gemini5hRemaining, qs.Gemini5hReset))
-	if qs.GeminiWeeklyReset != nil {
-		fmt.Fprintf(w, "  • Weekly Window: %s\n\n", formatWindow(qs.GeminiWeeklyRemaining, qs.GeminiWeeklyReset))
-	} else {
-		fmt.Fprintf(w, "  • Weekly Window: -\n\n")
-	}
+	fmt.Fprintf(w, "  • Weekly Window: %s\n\n", formatWindow(qs.GeminiWeeklyRemaining, qs.GeminiWeeklyReset))
 
 	fmt.Fprintln(w, "Third-Party Models:")
 	fmt.Fprintf(w, "  • 5-Hour Window: %s\n", formatWindow(qs.ThirdParty5hRemaining, qs.ThirdParty5hReset))

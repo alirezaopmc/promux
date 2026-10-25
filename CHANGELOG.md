@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-10-25
+
+### Fixed
+- **Gemini Weekly Display Formatting**: Reverted suppression of Gemini weekly quota percentages when reset timestamps are missing, formatting idle/floating 100% capacity as `100.0% (-)` per `SPEC.md §5.1` rather than hiding it behind a plain dash `-` (`pkg/cmd/quota.go`).
+- **Independent Weekly Priming Eligibility**: Fixed bug in `IsEligibleForPrime` where an active countdown on one model family (e.g. Claude) caused unprimed floating weekly windows on the other family (e.g. Gemini) to be skipped (`pkg/quota/prime.go`).
+
 ## [1.1.2] - 2026-10-25
 
 ### Fixed

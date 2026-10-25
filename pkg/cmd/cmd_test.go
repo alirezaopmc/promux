@@ -109,11 +109,11 @@ func TestFormatOverviewCell(t *testing.T) {
 	}
 }
 
-func TestPrintQuotaGeminiWeeklyDashWhenNil(t *testing.T) {
+func TestPrintQuotaGeminiWeeklyFormatWhenNil(t *testing.T) {
 	buf := new(bytes.Buffer)
 	qs := models.NewQuotaSummary()
 	qs.Gemini5hRemaining = 0.90
-	qs.GeminiWeeklyReset = nil // no weekly reset for gemini
+	qs.GeminiWeeklyReset = nil // no active weekly countdown
 
 	printQuota(buf, "test-account", qs)
 	out := buf.String()
@@ -121,7 +121,7 @@ func TestPrintQuotaGeminiWeeklyDashWhenNil(t *testing.T) {
 	if !strings.Contains(out, "Gemini Models:") {
 		t.Fatalf("expected 'Gemini Models:' in output: %s", out)
 	}
-	if !strings.Contains(out, "• Weekly Window: -") {
-		t.Fatalf("expected '• Weekly Window: -' in output: %s", out)
+	if !strings.Contains(out, "• Weekly Window: 100.0% (-)") {
+		t.Fatalf("expected '• Weekly Window: 100.0%% (-)' in output: %s", out)
 	}
 }

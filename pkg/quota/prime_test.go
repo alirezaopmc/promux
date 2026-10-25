@@ -56,6 +56,30 @@ func TestIsEligibleForPrime(t *testing.T) {
 	if !eligible {
 		t.Errorf("expected qs3 with nil reset and 100%% remaining to be eligible")
 	}
+
+	// Case 5: One window active, other window floating at 100% -> eligible
+	qs4 := &models.QuotaSummary{
+		GeminiWeeklyRemaining:     1.0,
+		GeminiWeeklyReset:         nil, // unprimed
+		ThirdPartyWeeklyRemaining: 0.90,
+		ThirdPartyWeeklyReset:     &future, // active countdown
+	}
+	eligible, reason = IsEligibleForPrime(qs4, now, false)
+	if !eligible {
+		t.Errorf("expected qs4 with unprimed Gemini weekly to be eligible, got: %s", reason)
+	}
+
+	// Case 6: Both windows have active future countdowns -> ineligible
+	qs5 := &models.QuotaSummary{
+		GeminiWeeklyRemaining:     0.90,
+		GeminiWeeklyReset:         &future,
+		ThirdPartyWeeklyRemaining: 0.90,
+		ThirdPartyWeeklyReset:     &future,
+	}
+	eligible, _ = IsEligibleForPrime(qs5, now, false)
+	if eligible {
+		t.Errorf("expected qs5 with both windows active to be ineligible")
+	}
 }
 
 func setupTestStorage(t *testing.T) (*storage.StorageEngine, *QuotaCache) {
