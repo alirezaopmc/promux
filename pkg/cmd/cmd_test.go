@@ -35,6 +35,7 @@ func executeCommand(args ...string) (string, error) {
 	ToolName = "agy"
 	JSONOut = false
 	DebugMode = false
+	Verbose = false
 
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)

@@ -35,7 +35,10 @@ var runAgyPrime = func(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, agyPath, "-p", "ping", "--disable-slash-commands")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("agy command failed: %w (output: %s)", err, strings.TrimSpace(string(out)))
+		return &PrimeExecError{
+			Err:    err,
+			Output: strings.TrimSpace(string(out)),
+		}
 	}
 	return nil
 }
@@ -252,7 +255,7 @@ func PrimeAccount(ctx context.Context, store *storage.StorageEngine, cache *Quot
 		defer agyCancel()
 
 		if err := runAgyPrime(agyCtx); err != nil {
-			return fmt.Errorf("headless priming turn failed: %w", err)
+			return err
 		}
 
 		// Copy updated live token back to account vault
