@@ -93,3 +93,33 @@ func TestQuotaSummary(t *testing.T) {
 		t.Fatalf("expected MinWeekly 0.9, got %v", q.MinWeekly())
 	}
 }
+
+func TestStateHubActiveJSONCompatibility(t *testing.T) {
+	// Legacy state.json without hub_active unmarshals with HubActive == nil
+	legacy := []byte(`{"active":"alpha","accounts":{}}`)
+	var st State
+	if err := json.Unmarshal(legacy, &st); err != nil {
+		t.Fatalf("unmarshal legacy state failed: %v", err)
+	}
+	if st.Active == nil || *st.Active != "alpha" {
+		t.Fatalf("expected active alpha, got %v", st.Active)
+	}
+	if st.HubActive != nil {
+		t.Fatalf("expected nil HubActive for legacy state, got %v", *st.HubActive)
+	}
+
+	// State with hub_active round-trips cleanly
+	hub := "beta"
+	st.HubActive = &hub
+	raw, err := json.Marshal(st)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	var decoded State
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("re-unmarshal failed: %v", err)
+	}
+	if decoded.HubActive == nil || *decoded.HubActive != "beta" {
+		t.Fatalf("expected HubActive beta, got %v", decoded.HubActive)
+	}
+}

@@ -36,8 +36,9 @@ func (a *AccountMeta) State(now time.Time) AccountState {
 }
 
 type State struct {
-	Active   *string                 `json:"active"`
-	Accounts map[string]*AccountMeta `json:"accounts"`
+	Active    *string                 `json:"active"`
+	HubActive *string                 `json:"hub_active,omitempty"`
+	Accounts  map[string]*AccountMeta `json:"accounts"`
 }
 
 func NewState() *State {
