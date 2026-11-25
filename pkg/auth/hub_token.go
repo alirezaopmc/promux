@@ -125,7 +125,8 @@ func ReadHubTokenForVault(hubTokenPath string) (RawTokenData, string, []byte, er
 }
 
 // SyncHubToVaultIfSameAccount copies the Hub live token (without writer_id) to the vault token
-// when both exist and share the same non-empty refresh_token.
+// when both exist, share the same non-empty refresh_token, and the Hub token would not regress
+// a fresher vaulted access token.
 func SyncHubToVaultIfSameAccount(hubTokenPath, vaultTokenPath string) error {
 	hubData, err := ReadTokenData(hubTokenPath)
 	if err != nil {
@@ -145,6 +146,16 @@ func SyncHubToVaultIfSameAccount(hubTokenPath, vaultTokenPath string) error {
 	vaultRef := ExtractRefreshToken(vaultData)
 	if hubRef == "" || vaultRef == "" || hubRef != vaultRef {
 		return nil
+	}
+	if ExtractAccessToken(hubData) == "" {
+		return nil
+	}
+	hubExp, hubExpOK := ParseTokenExpiry(ExtractExpiry(hubData))
+	vaultExp, vaultExpOK := ParseTokenExpiry(ExtractExpiry(vaultData))
+	if ExtractAccessToken(vaultData) != "" && vaultExpOK {
+		if !hubExpOK || !hubExp.After(vaultExp) {
+			return nil
+		}
 	}
 	clean := maps.Clone(hubData)
 	delete(clean, "writer_id")

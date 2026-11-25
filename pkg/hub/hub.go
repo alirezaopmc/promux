@@ -54,9 +54,16 @@ func validateProfileName(name string) error {
 	return nil
 }
 
-// ensureVaultTokenFresh checks the vaulted OAuth token for name and refreshes it if expired
+// EnsureVaultTokenFresh checks the vaulted OAuth token for name and refreshes it if expired
 // or missing an access token. Callers must NOT hold store.LockFile when calling this helper.
-func ensureVaultTokenFresh(store *storage.StorageEngine, name string) (string, bool, error) {
+func EnsureVaultTokenFresh(store *storage.StorageEngine, name string) (string, bool, error) {
+	if store == nil {
+		return "", false, errors.New("storage engine is required")
+	}
+	if _, err := store.GetProfile(name); err != nil {
+		return "", false, err
+	}
+
 	vaultToken := filepath.Join(store.AccountsDir, name, "antigravity-oauth-token")
 	tokenData, err := auth.ReadTokenData(vaultToken)
 	if err != nil {
@@ -133,12 +140,8 @@ func Switch(ctx context.Context, store *storage.StorageEngine, name string, opts
 		return nil, err
 	}
 
-	if _, err := store.GetProfile(name); err != nil {
-		return nil, err
-	}
-
 	// Validate and refresh before acquiring manager.lock or touching Hub live token/state.
-	vaultToken, refreshed, err := ensureVaultTokenFresh(store, name)
+	vaultToken, refreshed, err := EnsureVaultTokenFresh(store, name)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +246,7 @@ func RotateNext(ctx context.Context, store *storage.StorageEngine, reason string
 	}
 
 	// Ensure candidate token freshness outside manager.lock before mutating state or Hub token.
-	vaultToken, refreshed, err := ensureVaultTokenFresh(store, target)
+	vaultToken, refreshed, err := EnsureVaultTokenFresh(store, target)
 	if err != nil {
 		return nil, err
 	}

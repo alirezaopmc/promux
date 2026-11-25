@@ -180,7 +180,7 @@ func newSwitchCmd() *cobra.Command {
 			var preRefreshed bool
 			if useHub {
 				var err error
-				preRefreshed, err = ensureProfileTokenFresh(store, name)
+				_, preRefreshed, err = hub.EnsureVaultTokenFresh(store, name)
 				if err != nil {
 					return err
 				}

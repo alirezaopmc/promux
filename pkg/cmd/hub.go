@@ -3,11 +3,8 @@ package cmd
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +15,6 @@ import (
 	"github.com/alirezaopmc/promux/pkg/auth"
 	"github.com/alirezaopmc/promux/pkg/config"
 	"github.com/alirezaopmc/promux/pkg/hub"
-	"github.com/alirezaopmc/promux/pkg/storage"
 	"github.com/alirezaopmc/promux/pkg/terminal"
 )
 
@@ -40,31 +36,6 @@ func writeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
-}
-
-func ensureProfileTokenFresh(store *storage.StorageEngine, name string) (bool, error) {
-	if _, err := store.GetProfile(name); err != nil {
-		return false, err
-	}
-
-	vaultToken := filepath.Join(store.AccountsDir, name, "antigravity-oauth-token")
-	tokenData, err := auth.ReadTokenData(vaultToken)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, fmt.Errorf("%w at %s", storage.ErrSrcTokenNotFound, vaultToken)
-		}
-		return false, fmt.Errorf("failed to read vault token for %s: %w", name, err)
-	}
-
-	if auth.ExtractAccessToken(tokenData) != "" && !auth.IsTokenExpired(tokenData, config.DefaultTokenExpiryBufferSeconds) {
-		return false, nil
-	}
-
-	refreshed, err := auth.RefreshAccountToken(store, name, true)
-	if err != nil {
-		return false, fmt.Errorf("failed to refresh token for %s: %w", name, err)
-	}
-	return refreshed, nil
 }
 
 const hubReconnectNote = "Hub language_server did not auto-respawn within timeout; Antigravity GUI will reconnect automatically or on window reload."
@@ -106,11 +77,15 @@ func emitHubSyncStatusWarning(errOut io.Writer, st *hub.StatusResult) {
 	if !JSONOut || st == nil || st.Sync == nil || st.Sync.State != auth.HubSyncOutOfSync {
 		return
 	}
+	liveEmail := st.Sync.LiveEmail
+	if liveEmail == "" {
+		liveEmail = "unknown"
+	}
 	tracked := "none"
 	if st.HubActive != nil && *st.HubActive != "" {
 		tracked = *st.HubActive
 	}
-	fmt.Fprintf(errOut, "warning: Hub live token (%s) is out-of-sync with tracked profile %q\n", st.Sync.LiveEmail, tracked)
+	fmt.Fprintf(errOut, "warning: Hub live token (%s) is out-of-sync with tracked profile %q\n", liveEmail, tracked)
 }
 
 func renderHubStatus(out io.Writer, st *hub.StatusResult, detailed bool) error {
@@ -364,27 +339,31 @@ func newHubSaveCmd() *cobra.Command {
 	return cmd
 }
 
+func runHubStatusCmd(cmd *cobra.Command, detailed bool) error {
+	store := GetStorage()
+	st, err := hub.Status(store)
+	if err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	if JSONOut {
+		if err := writeJSON(out, st); err != nil {
+			return err
+		}
+		emitHubSyncStatusWarning(cmd.ErrOrStderr(), st)
+		return nil
+	}
+
+	return renderHubStatus(out, st, detailed)
+}
+
 func newHubWhoamiCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "whoami",
 		Short: "Display Hub active profile, sync status, and running Hub daemons",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store := GetStorage()
-			st, err := hub.Status(store)
-			if err != nil {
-				return err
-			}
-
-			out := cmd.OutOrStdout()
-			if JSONOut {
-				if err := writeJSON(out, st); err != nil {
-					return err
-				}
-				emitHubSyncStatusWarning(cmd.ErrOrStderr(), st)
-				return nil
-			}
-
-			return renderHubStatus(out, st, false)
+			return runHubStatusCmd(cmd, false)
 		},
 	}
 }
@@ -394,22 +373,7 @@ func newHubStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Inspect detailed Hub profile, token sync, and language_server daemon status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store := GetStorage()
-			st, err := hub.Status(store)
-			if err != nil {
-				return err
-			}
-
-			out := cmd.OutOrStdout()
-			if JSONOut {
-				if err := writeJSON(out, st); err != nil {
-					return err
-				}
-				emitHubSyncStatusWarning(cmd.ErrOrStderr(), st)
-				return nil
-			}
-
-			return renderHubStatus(out, st, true)
+			return runHubStatusCmd(cmd, true)
 		},
 	}
 }

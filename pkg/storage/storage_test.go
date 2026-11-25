@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -238,14 +239,16 @@ func TestStorageSetHubActiveAndTokenByteEdgeCases(t *testing.T) {
 		t.Fatalf("expected default planType STANDARD, got %s", firstAcct.PlanType)
 	}
 
-	// Verify token file permissions are 0600
+	// Verify token file permissions are 0600 (Unix only)
 	tokenPath := filepath.Join(storage.AccountsDir, "acct-1", "antigravity-oauth-token")
 	info, err := os.Stat(tokenPath)
 	if err != nil {
 		t.Fatalf("stat token file failed: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0600 {
-		t.Fatalf("expected token file mode 0600, got %o", perm)
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm != 0600 {
+			t.Fatalf("expected token file mode 0600, got %o", perm)
+		}
 	}
 
 	// Re-save with nil email/projectID preserves existing metadata and SavedAt

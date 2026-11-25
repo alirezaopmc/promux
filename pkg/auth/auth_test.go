@@ -371,6 +371,65 @@ func TestSyncHubToVaultIfSameAccount(t *testing.T) {
 	if ExtractAccessToken(vaultData) != "hub-new" {
 		t.Fatalf("expected vault token unchanged on different refresh_token, got %q", ExtractAccessToken(vaultData))
 	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	t1 := now.Add(1 * time.Hour).Format(time.RFC3339)
+	t2 := now.Add(2 * time.Hour).Format(time.RFC3339)
+	t3 := now.Add(3 * time.Hour).Format(time.RFC3339)
+
+	// Older Hub token must NOT overwrite fresher vault token
+	_ = os.WriteFile(vaultPath, []byte(`{"token":{"access_token":"vault-fresher","refresh_token":"ref-same","expiry":"`+t2+`"}}`), 0600)
+	_ = os.WriteFile(hubPath, []byte(`{"writer_id":"wid-3","token":{"access_token":"hub-older","refresh_token":"ref-same","expiry":"`+t1+`"}}`), 0600)
+	if err := SyncHubToVaultIfSameAccount(hubPath, vaultPath); err != nil {
+		t.Fatalf("SyncHubToVaultIfSameAccount older hub failed: %v", err)
+	}
+	vaultData, _ = ReadTokenData(vaultPath)
+	if ExtractAccessToken(vaultData) != "vault-fresher" {
+		t.Fatalf("expected fresher vault token preserved when hub is older, got %q", ExtractAccessToken(vaultData))
+	}
+
+	// Hub token with missing/invalid expiry must NOT overwrite valid-expiry vault token
+	_ = os.WriteFile(hubPath, []byte(`{"writer_id":"wid-4","token":{"access_token":"hub-noexp","refresh_token":"ref-same"}}`), 0600)
+	if err := SyncHubToVaultIfSameAccount(hubPath, vaultPath); err != nil {
+		t.Fatalf("SyncHubToVaultIfSameAccount missing hub expiry failed: %v", err)
+	}
+	vaultData, _ = ReadTokenData(vaultPath)
+	if ExtractAccessToken(vaultData) != "vault-fresher" {
+		t.Fatalf("expected fresher vault token preserved when hub expiry missing, got %q", ExtractAccessToken(vaultData))
+	}
+
+	// Equal expiry Hub token must NOT overwrite vault token
+	_ = os.WriteFile(hubPath, []byte(`{"writer_id":"wid-5","token":{"access_token":"hub-equal","refresh_token":"ref-same","expiry":"`+t2+`"}}`), 0600)
+	if err := SyncHubToVaultIfSameAccount(hubPath, vaultPath); err != nil {
+		t.Fatalf("SyncHubToVaultIfSameAccount equal hub expiry failed: %v", err)
+	}
+	vaultData, _ = ReadTokenData(vaultPath)
+	if ExtractAccessToken(vaultData) != "vault-fresher" {
+		t.Fatalf("expected vault token preserved on equal expiry, got %q", ExtractAccessToken(vaultData))
+	}
+
+	// Hub token with empty access_token must NOT overwrite vault token even with later expiry
+	_ = os.WriteFile(hubPath, []byte(`{"writer_id":"wid-6","token":{"access_token":"","refresh_token":"ref-same","expiry":"`+t3+`"}}`), 0600)
+	if err := SyncHubToVaultIfSameAccount(hubPath, vaultPath); err != nil {
+		t.Fatalf("SyncHubToVaultIfSameAccount empty hub access_token failed: %v", err)
+	}
+	vaultData, _ = ReadTokenData(vaultPath)
+	if ExtractAccessToken(vaultData) != "vault-fresher" {
+		t.Fatalf("expected vault token preserved when hub access_token empty, got %q", ExtractAccessToken(vaultData))
+	}
+
+	// Newer Hub token DOES update vault token and strips writer_id
+	_ = os.WriteFile(hubPath, []byte(`{"writer_id":"wid-7","token":{"access_token":"hub-newest","refresh_token":"ref-same","expiry":"`+t3+`"}}`), 0600)
+	if err := SyncHubToVaultIfSameAccount(hubPath, vaultPath); err != nil {
+		t.Fatalf("SyncHubToVaultIfSameAccount newer hub failed: %v", err)
+	}
+	vaultData, _ = ReadTokenData(vaultPath)
+	if ExtractAccessToken(vaultData) != "hub-newest" {
+		t.Fatalf("expected vault token updated to hub-newest, got %q", ExtractAccessToken(vaultData))
+	}
+	if _, has := vaultData["writer_id"]; has {
+		t.Fatalf("expected writer_id stripped from updated vault token")
+	}
 }
 
 func TestRefreshAccountTokenSyncsHubActive(t *testing.T) {

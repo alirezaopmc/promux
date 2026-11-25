@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -281,7 +282,11 @@ func TestRestartDaemonsNoRestartAndRespawnDetection(t *testing.T) {
 		}()
 
 		// Simulate agy-keeper writing the respawned ls_*.json shortly after old LS exits
+		var wg sync.WaitGroup
+		defer wg.Wait()
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			time.Sleep(150 * time.Millisecond)
 			newJSON := fmt.Sprintf(`{"pid":%d,"httpsPort":41003,"httpPort":41004,"lsVersion":"2.35.1"}`, newCmd.Process.Pid)
 			_ = os.WriteFile(filepath.Join(daemonDir, "ls_new.json"), []byte(newJSON), 0600)

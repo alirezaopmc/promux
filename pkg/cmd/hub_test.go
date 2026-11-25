@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/alirezaopmc/promux/pkg/auth"
 	"github.com/alirezaopmc/promux/pkg/config"
+	"github.com/alirezaopmc/promux/pkg/hub"
 	"github.com/alirezaopmc/promux/pkg/models"
 )
 
@@ -426,6 +428,25 @@ func TestCLIHubJSONWarningsGoToStderr(t *testing.T) {
 	if !strings.Contains(stderr, "out-of-sync") {
 		t.Fatalf("expected out-of-sync warning on stderr, got %q", stderr)
 	}
+
+	// Empty id_token_email should display "unknown" instead of "()"
+	if err := os.WriteFile(hubTokenPath, makeHubTestTokenJSON(t, "other-acc", "other-ref", "", future, "w-other"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err = executeCommandStreams("hub", "whoami", "--json")
+	if err != nil {
+		t.Fatalf("hub whoami --json (empty email) failed: %v (stdout: %s, stderr: %s)", err, stdout, stderr)
+	}
+	var whoamiRes map[string]any
+	if err := json.Unmarshal([]byte(stdout), &whoamiRes); err != nil {
+		t.Fatalf("stdout must be pure valid JSON when LiveEmail is empty, got err=%v raw=%q", err, stdout)
+	}
+	if !strings.Contains(stderr, "Hub live token (unknown) is out-of-sync") {
+		t.Fatalf("expected 'Hub live token (unknown) is out-of-sync' on stderr, got %q", stderr)
+	}
+	if strings.Contains(stderr, "()") {
+		t.Fatalf("unexpected empty parens '()' in warning: %q", stderr)
+	}
 }
 
 func TestCLIHubRestartPIDsHiddenCommand(t *testing.T) {
@@ -608,6 +629,75 @@ func TestCLIHubHumanOutputsAndRestartNeedsReconnect(t *testing.T) {
 	}
 }
 
+func TestCLIHubDeferredSelfRestartE2E(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix deferred self-restart test")
+	}
+
+	_, _, _, _, _, daemonDir := setupHubCLITestEnv(t)
+	if err := os.MkdirAll(daemonDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PROMUX_HUB_DAEMON_DIR", daemonDir)
+
+	tmpBin := filepath.Join(t.TempDir(), "promux")
+	buildCmd := exec.Command("go", "build", "-o", tmpBin, "../../cmd/promux")
+	if buildOut, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build promux test binary: %v\n%s", err, string(buildOut))
+	}
+
+	resultFile := filepath.Join(t.TempDir(), "restart-result.json")
+	parent := exec.Command(os.Args[0],
+		"-test.run=^TestCLIHelperProcess$",
+		"--",
+		"language_server", "--standalone", "--subclient_type", "hub", "--workspace_id", "agy-hub-ssh",
+	)
+	parent.Env = append(os.Environ(),
+		"GO_WANT_CLI_HELPER_PROCESS=1",
+		"HUB_CLI_HELPER_MODE=self-restart-parent",
+		"PROMUX_BIN="+tmpBin,
+		"PROMUX_RESTART_RESULT_FILE="+resultFile,
+	)
+
+	var parentStderr bytes.Buffer
+	parent.Stderr = &parentStderr
+	if err := parent.Start(); err != nil {
+		t.Fatalf("failed to start helper parent: %v", err)
+	}
+	parentPID := parent.Process.Pid
+
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- parent.Wait()
+	}()
+
+	select {
+	case err := <-waitCh:
+		if err != nil {
+			t.Fatalf("helper parent failed (expected clean SIGTERM exit 0): %v\nstderr:\n%s", err, parentStderr.String())
+		}
+	case <-time.After(5 * time.Second):
+		_ = parent.Process.Kill()
+		<-waitCh
+		t.Fatalf("timed out waiting for helper parent (pid=%d) to receive deferred SIGTERM and exit\nstderr:\n%s", parentPID, parentStderr.String())
+	}
+
+	raw, err := os.ReadFile(resultFile)
+	if err != nil {
+		t.Fatalf("failed to read restart result file: %v", err)
+	}
+	var res hub.RestartResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		t.Fatalf("failed to unmarshal hub restart JSON: %v (raw: %q)", err, string(raw))
+	}
+	if !res.Deferred {
+		t.Fatalf("expected deferred=true in RestartResult, got %+v", res)
+	}
+	if !slices.Contains(res.DeferredPIDs, parentPID) {
+		t.Fatalf("expected deferred_pids to contain parent PID %d, got %+v", parentPID, res.DeferredPIDs)
+	}
+}
+
 func startCLIHelperProcess(t *testing.T, trailingArgs ...string) (*exec.Cmd, func()) {
 	t.Helper()
 	args := []string{"-test.run=^TestCLIHelperProcess$"}
@@ -662,9 +752,46 @@ func TestCLIHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_CLI_HELPER_PROCESS") != "1" {
 		return
 	}
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM)
-	fmt.Println("READY")
-	<-sigCh
-	os.Exit(0)
+
+	switch os.Getenv("HUB_CLI_HELPER_MODE") {
+	case "self-restart-parent":
+		daemonDir := os.Getenv("PROMUX_HUB_DAEMON_DIR")
+		promuxBin := os.Getenv("PROMUX_BIN")
+		resultFile := os.Getenv("PROMUX_RESTART_RESULT_FILE")
+
+		descJSON := fmt.Sprintf(`{"pid":%d,"httpsPort":43101,"httpPort":43102,"lsVersion":"2.35.1","csrfToken":"tok-self"}`, os.Getpid())
+		if err := os.WriteFile(filepath.Join(daemonDir, "ls_self.json"), []byte(descJSON), 0600); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write ls_self.json: %v\n", err)
+			os.Exit(2)
+		}
+
+		restartCmd := exec.Command(promuxBin, "hub", "restart", "--json")
+		var outBuf, errBuf bytes.Buffer
+		restartCmd.Stdout = &outBuf
+		restartCmd.Stderr = &errBuf
+		if err := restartCmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "promux hub restart failed: %v\nstdout: %s\nstderr: %s\n", err, outBuf.String(), errBuf.String())
+			os.Exit(3)
+		}
+		if err := os.WriteFile(resultFile, outBuf.Bytes(), 0600); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write restart result: %v\n", err)
+			os.Exit(4)
+		}
+
+		select {
+		case <-sigCh:
+			os.Exit(0)
+		case <-time.After(5 * time.Second):
+			fmt.Fprintln(os.Stderr, "timed out waiting for deferred SIGTERM")
+			os.Exit(5)
+		}
+
+	default:
+		fmt.Println("READY")
+		<-sigCh
+		os.Exit(0)
+	}
 }
