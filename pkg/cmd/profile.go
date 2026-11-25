@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/alirezaopmc/promux/pkg/failover"
+	"github.com/alirezaopmc/promux/pkg/hub"
 	"github.com/alirezaopmc/promux/pkg/models"
 	"github.com/alirezaopmc/promux/pkg/terminal"
 )
@@ -66,6 +67,10 @@ func newListCmd() *cobra.Command {
 			if state.Active != nil {
 				activeName = *state.Active
 			}
+			hubActiveName := ""
+			if state.HubActive != nil {
+				hubActiveName = *state.HubActive
+			}
 
 			for _, name := range accountNames {
 				acct := state.Accounts[name]
@@ -96,7 +101,12 @@ func newListCmd() *cobra.Command {
 					email = *acct.Email
 				}
 
-				tbl.AddRow(fmt.Sprintf("%s %s", prefix, name), statusStr, lastUsed, email, acct.PlanType)
+				hubTag := ""
+				if hubActiveName != "" && name == hubActiveName {
+					hubTag = " [hub]"
+				}
+
+				tbl.AddRow(fmt.Sprintf("%s %s%s", prefix, name, hubTag), statusStr, lastUsed, email, acct.PlanType)
 			}
 			return tbl.Render(out)
 		},
@@ -149,19 +159,69 @@ func newSaveCmd() *cobra.Command {
 }
 
 func newSwitchCmd() *cobra.Command {
-	return &cobra.Command{
+	var (
+		useHub    bool
+		noRestart bool
+	)
+
+	cmd := &cobra.Command{
 		Use:   "switch <name>",
 		Short: "Switch active credentials to a named profile",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+			if useHub {
+				if err := requireAgyTool(); err != nil {
+					return err
+				}
+			}
+
 			store := GetStorage()
+			var preRefreshed bool
+			if useHub {
+				var err error
+				_, preRefreshed, err = hub.EnsureVaultTokenFresh(store, name)
+				if err != nil {
+					return err
+				}
+			}
 
 			if err := store.SwitchProfile(name); err != nil {
 				return err
 			}
 
 			out := cmd.OutOrStdout()
+			if useHub {
+				hubRes, err := hub.Switch(cmdContext(cmd), store, name, hub.RestartOptions{NoRestart: noRestart})
+				if err != nil {
+					return err
+				}
+				if preRefreshed {
+					hubRes.Refreshed = true
+				}
+
+				if JSONOut {
+					if err := writeJSON(out, map[string]any{
+						"status":     "switched",
+						"active":     name,
+						"hub_active": hubRes.Profile,
+						"hub":        hubRes,
+					}); err != nil {
+						return err
+					}
+					printHubRestartSummary(out, cmd.ErrOrStderr(), hubRes.Restart, noRestart)
+					return nil
+				}
+
+				fmt.Fprintf(out, "✓ Switched active profile to '%s'\n", name)
+				fmt.Fprintf(out, "✓ Switched Hub profile to '%s'\n", hubRes.Profile)
+				if hubRes.Refreshed {
+					fmt.Fprintln(out, "  • Refreshed expired OAuth token before switching")
+				}
+				printHubRestartSummary(out, cmd.ErrOrStderr(), hubRes.Restart, noRestart)
+				return nil
+			}
+
 			if JSONOut {
 				return json.NewEncoder(out).Encode(map[string]any{"status": "switched", "active": name})
 			}
@@ -170,18 +230,30 @@ func newSwitchCmd() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&useHub, "hub", false, "Also switch the Antigravity Hub SSH GUI profile")
+	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "Skip restarting running Hub language_server daemons when --hub is set")
+	return cmd
 }
 
 func newNextCmd() *cobra.Command {
 	var (
-		reason   string
-		cooldown int
+		reason    string
+		cooldown  int
+		useHub    bool
+		noRestart bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "next",
 		Short: "Rotate to the next eligible standby profile",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if useHub {
+				if err := requireAgyTool(); err != nil {
+					return err
+				}
+			}
+
 			store := GetStorage()
 			fo := failover.New(store)
 
@@ -190,8 +262,32 @@ func newNextCmd() *cobra.Command {
 				return err
 			}
 
+			var hubRes *hub.SwitchResult
+			if useHub && res.Success && res.ToAccount != nil {
+				hubRes, err = hub.Switch(cmdContext(cmd), store, *res.ToAccount, hub.RestartOptions{NoRestart: noRestart})
+				if err != nil {
+					return err
+				}
+			}
+
 			out := cmd.OutOrStdout()
 			if JSONOut {
+				if useHub {
+					payload := struct {
+						*models.RotationResult
+						Hub *hub.SwitchResult `json:"hub,omitempty"`
+					}{
+						RotationResult: res,
+						Hub:            hubRes,
+					}
+					if err := writeJSON(out, payload); err != nil {
+						return err
+					}
+					if hubRes != nil {
+						printHubRestartSummary(out, cmd.ErrOrStderr(), hubRes.Restart, noRestart)
+					}
+					return nil
+				}
 				return json.NewEncoder(out).Encode(res)
 			}
 
@@ -210,12 +306,21 @@ func newNextCmd() *cobra.Command {
 			}
 
 			fmt.Fprintf(out, "✓ Rotated profile: %s -> %s (cooldown: %dm)\n", from, to, cooldown)
+			if useHub && hubRes != nil {
+				fmt.Fprintf(out, "✓ Synced Hub profile to '%s'\n", hubRes.Profile)
+				if hubRes.Refreshed {
+					fmt.Fprintln(out, "  • Refreshed expired OAuth token before switching")
+				}
+				printHubRestartSummary(out, cmd.ErrOrStderr(), hubRes.Restart, noRestart)
+			}
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&reason, "reason", "manual rotation", "Reason for failover rotation")
 	cmd.Flags().IntVar(&cooldown, "cooldown", 60, "Cooldown minutes for rotated account")
+	cmd.Flags().BoolVar(&useHub, "hub", false, "Also switch the Antigravity Hub SSH GUI profile")
+	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "Skip restarting running Hub language_server daemons when --hub is set")
 
 	return cmd
 }

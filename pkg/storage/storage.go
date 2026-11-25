@@ -106,6 +106,35 @@ func (s *StorageEngine) atomicCopyFile(src, dst string) error {
 	return os.Rename(tmpPath, dst)
 }
 
+func (s *StorageEngine) atomicWriteBytes(targetPath string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		return err
+	}
+
+	tmpPath := targetPath + ".tmp"
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+
+	return os.Rename(tmpPath, targetPath)
+}
+
 func (s *StorageEngine) LoadState() (*models.State, error) {
 	if _, err := os.Stat(s.StateFile); os.IsNotExist(err) {
 		return models.NewState(), nil
@@ -251,11 +280,83 @@ func (s *StorageEngine) RemoveProfile(name string) error {
 		if state.Active != nil && *state.Active == name {
 			state.Active = nil
 		}
+		if state.HubActive != nil && *state.HubActive == name {
+			state.HubActive = nil
+		}
 
 		acctDir := filepath.Join(s.AccountsDir, name)
 		_ = os.RemoveAll(acctDir)
 		return nil
 	})
+}
+
+func (s *StorageEngine) SetHubActiveWithContext(ctx context.Context, name string) error {
+	return s.Transaction(ctx, func(state *models.State) error {
+		acct, ok := state.Accounts[name]
+		if !ok {
+			return fmt.Errorf("%w: %s", ErrAccountNotFound, name)
+		}
+		now := time.Now().UTC()
+		acct.LastUsedAt = &now
+		state.HubActive = &name
+		return nil
+	})
+}
+
+func (s *StorageEngine) SaveProfileFromTokenBytes(name string, tokenJSON []byte, email, projectID *string, planType string, setCLIActive, setHubActive bool) (*models.AccountMeta, error) {
+	if planType == "" {
+		planType = "STANDARD"
+	}
+	var savedAcct *models.AccountMeta
+	err := s.Transaction(context.Background(), func(state *models.State) error {
+		acctDir := filepath.Join(s.AccountsDir, name)
+		destToken := filepath.Join(acctDir, "antigravity-oauth-token")
+		if err := s.atomicWriteBytes(destToken, tokenJSON); err != nil {
+			return fmt.Errorf("failed to write token to vault: %w", err)
+		}
+
+		now := time.Now().UTC()
+		acct := &models.AccountMeta{
+			Name:       name,
+			Enabled:    true,
+			SavedAt:    &now,
+			LastUsedAt: &now,
+			Email:      email,
+			ProjectID:  projectID,
+			PlanType:   planType,
+		}
+		if existing, ok := state.Accounts[name]; ok && existing.SavedAt != nil {
+			acct.SavedAt = existing.SavedAt
+			if acct.Email == nil {
+				acct.Email = existing.Email
+			}
+			if acct.ProjectID == nil {
+				acct.ProjectID = existing.ProjectID
+			}
+		}
+
+		state.Accounts[name] = acct
+		if setCLIActive && (state.Active == nil || *state.Active == "") {
+			state.Active = &name
+		}
+		if setHubActive {
+			state.HubActive = &name
+		}
+		savedAcct = acct
+		return nil
+	})
+	return savedAcct, err
+}
+
+func (s *StorageEngine) GetHubActiveProfile() (*models.AccountMeta, error) {
+	state, err := s.LoadState()
+	if err != nil {
+		return nil, err
+	}
+	if state.HubActive == nil {
+		return nil, nil
+	}
+	return state.Accounts[*state.HubActive], nil
 }
 
 func (s *StorageEngine) GetActiveProfile() (*models.AccountMeta, error) {

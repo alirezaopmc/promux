@@ -68,3 +68,33 @@ func TestDetectCodeAssistURL(t *testing.T) {
 		t.Fatalf("expected %s, got %s", expected, url)
 	}
 }
+
+func TestHubPathsEnvOverrides(t *testing.T) {
+	hubGemini := t.TempDir()
+	t.Setenv("PROMUX_HUB_GEMINI_DIR", hubGemini)
+	t.Setenv("PROMUX_HUB_TOKEN_FILE", "")
+	t.Setenv("PROMUX_HUB_DAEMON_DIR", "")
+
+	if HubGeminiDir() != hubGemini {
+		t.Fatalf("expected %s, got %s", hubGemini, HubGeminiDir())
+	}
+	expectedTok := filepath.Join(hubGemini, "jetski-standalone-oauth-token")
+	if HubLiveTokenFile("") != expectedTok {
+		t.Fatalf("expected %s, got %s", expectedTok, HubLiveTokenFile(""))
+	}
+	expectedDaemon := filepath.Join(hubGemini, "antigravity", "daemon")
+	if HubDaemonDir("") != expectedDaemon {
+		t.Fatalf("expected %s, got %s", expectedDaemon, HubDaemonDir(""))
+	}
+
+	customTok := filepath.Join(t.TempDir(), "custom-hub-token")
+	customDaemon := filepath.Join(t.TempDir(), "custom-daemon")
+	t.Setenv("PROMUX_HUB_TOKEN_FILE", customTok)
+	t.Setenv("PROMUX_HUB_DAEMON_DIR", customDaemon)
+	if HubLiveTokenFile("") != customTok {
+		t.Fatalf("expected %s, got %s", customTok, HubLiveTokenFile(""))
+	}
+	if HubDaemonDir("") != customDaemon {
+		t.Fatalf("expected %s, got %s", customDaemon, HubDaemonDir(""))
+	}
+}

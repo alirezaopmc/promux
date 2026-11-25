@@ -43,6 +43,7 @@ func init() {
 	RootCmd.AddCommand(newRunCmd())
 	RootCmd.AddCommand(newToolsCmd())
 	RootCmd.AddCommand(newVersionCmd())
+	RootCmd.AddCommand(newHubCmd())
 
 	// Top-level aliases for default agy usage
 	RootCmd.AddCommand(newListCmd())

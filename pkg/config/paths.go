@@ -29,6 +29,40 @@ func GeminiHome() string {
 	return filepath.Join(home, ".gemini", "antigravity-cli")
 }
 
+// HubGeminiDir returns the root .gemini directory used by the Antigravity 2.0 Hub.
+func HubGeminiDir() string {
+	if h := os.Getenv("PROMUX_HUB_GEMINI_DIR"); h != "" {
+		return h
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".gemini"
+	}
+	return filepath.Join(home, ".gemini")
+}
+
+// HubLiveTokenFile returns the path to the Hub live OAuth token file.
+func HubLiveTokenFile(hubGeminiDir string) string {
+	if p := os.Getenv("PROMUX_HUB_TOKEN_FILE"); p != "" {
+		return p
+	}
+	if hubGeminiDir == "" {
+		hubGeminiDir = HubGeminiDir()
+	}
+	return filepath.Join(hubGeminiDir, "jetski-standalone-oauth-token")
+}
+
+// HubDaemonDir returns the path to the Hub daemon state directory.
+func HubDaemonDir(hubGeminiDir string) string {
+	if d := os.Getenv("PROMUX_HUB_DAEMON_DIR"); d != "" {
+		return d
+	}
+	if hubGeminiDir == "" {
+		hubGeminiDir = HubGeminiDir()
+	}
+	return filepath.Join(hubGeminiDir, "antigravity", "daemon")
+}
+
 func ToolHome(tool string) string {
 	return filepath.Join(PromuxHome(), "tools", tool)
 }

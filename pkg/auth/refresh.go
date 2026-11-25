@@ -155,10 +155,16 @@ func RefreshAccountToken(store *storage.StorageEngine, accountName string, force
 	}
 
 	isActive := state.Active != nil && *state.Active == accountName
+	isHubActive := state.HubActive != nil && *state.HubActive == accountName
 	vaultToken := filepath.Join(store.AccountsDir, accountName, "antigravity-oauth-token")
 
 	if isActive {
 		SafeSyncLiveToVault(store, accountName)
+	}
+	if isHubActive {
+		if err := SyncHubToVaultIfSameAccount(config.HubLiveTokenFile(""), vaultToken); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to sync hub token to vault for %s: %v\n", accountName, err)
+		}
 	}
 
 	tokenPath := vaultToken
@@ -185,6 +191,11 @@ func RefreshAccountToken(store *storage.StorageEngine, accountName string, force
 	// If active, sync vault back to live
 	if isActive {
 		SafeSyncVaultToLive(store, accountName)
+	}
+	if isHubActive {
+		if _, err := SyncVaultToHubToken(vaultToken, config.HubLiveTokenFile("")); err != nil {
+			return true, fmt.Errorf("failed to sync refreshed token to hub: %w", err)
+		}
 	}
 
 	return true, nil

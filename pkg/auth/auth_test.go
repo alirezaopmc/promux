@@ -215,3 +215,270 @@ func TestRefreshAccountToken(t *testing.T) {
 		t.Fatalf("expected live token updated, got %s", ExtractAccessToken(liveData))
 	}
 }
+
+func TestHubTokenTranslationAndSyncStatus(t *testing.T) {
+	tmpDir := t.TempDir()
+	vaultPath := filepath.Join(tmpDir, "vault-token")
+	hubPath := filepath.Join(tmpDir, "jetski-standalone-oauth-token")
+
+	vaultJSON := `{"auth_method":"consumer","id_token_email":"u1@example.com","token":{"access_token":"acc-1","refresh_token":"ref-1","expiry":"2099-01-01T00:00:00Z"}}`
+	if err := os.WriteFile(vaultPath, []byte(vaultJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Case 1: hubPath missing -> generates 43-char URL-safe writer_id
+	wid1, err := SyncVaultToHubToken(vaultPath, hubPath)
+	if err != nil {
+		t.Fatalf("SyncVaultToHubToken failed: %v", err)
+	}
+	if len(wid1) != 43 {
+		t.Fatalf("expected 43-char writer_id, got %d (%q)", len(wid1), wid1)
+	}
+
+	// Case 2: hubPath already has writer_id -> preserves existing writer_id
+	_ = os.WriteFile(hubPath, []byte(`{"writer_id":"existing-writer-id","token":{"access_token":"old"}}`), 0600)
+	wid2, err := SyncVaultToHubToken(vaultPath, hubPath)
+	if err != nil {
+		t.Fatalf("SyncVaultToHubToken preserve failed: %v", err)
+	}
+	if wid2 != "existing-writer-id" {
+		t.Fatalf("expected preserved writer_id, got %q", wid2)
+	}
+
+	// Case 3: ReadHubTokenForVault strips writer_id and extracts email
+	clean, email, _, err := ReadHubTokenForVault(hubPath)
+	if err != nil {
+		t.Fatalf("ReadHubTokenForVault failed: %v", err)
+	}
+	if _, has := clean["writer_id"]; has {
+		t.Fatalf("expected writer_id stripped from vault token")
+	}
+	if email != "u1@example.com" {
+		t.Fatalf("expected u1@example.com, got %q", email)
+	}
+}
+
+func TestCheckHubSyncStatusAllStates(t *testing.T) {
+	promuxDir := t.TempDir()
+	geminiDir := t.TempDir()
+	hubDir := t.TempDir()
+	hubPath := filepath.Join(hubDir, "jetski-standalone-oauth-token")
+	store := storage.New(promuxDir, geminiDir)
+
+	// 1. HubSyncMissing: hub token file does not exist
+	info, err := CheckHubSyncStatus(store, hubPath)
+	if err != nil {
+		t.Fatalf("CheckHubSyncStatus missing failed: %v", err)
+	}
+	if info.State != HubSyncMissing {
+		t.Fatalf("expected %q, got %q", HubSyncMissing, info.State)
+	}
+
+	// 2. HubSyncUntracked: hub token exists, state.HubActive is nil/empty
+	hubToken := `{"writer_id":"wid-1","id_token_email":"u1@example.com","token":{"access_token":"acc-1","refresh_token":"ref-1","expiry":"2099-01-01T00:00:00Z"}}`
+	if err := os.WriteFile(hubPath, []byte(hubToken), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err = CheckHubSyncStatus(store, hubPath)
+	if err != nil {
+		t.Fatalf("CheckHubSyncStatus untracked failed: %v", err)
+	}
+	if info.State != HubSyncUntracked {
+		t.Fatalf("expected %q, got %q", HubSyncUntracked, info.State)
+	}
+	if info.LiveEmail != "u1@example.com" || info.WriterID != "wid-1" || info.LiveExpiry != "2099-01-01T00:00:00Z" {
+		t.Fatalf("unexpected HubSyncInfo metadata: %+v", info)
+	}
+
+	// 3. HubSyncInSync: state.HubActive matches refresh_token
+	vaultToken := `{"id_token_email":"u1@example.com","token":{"access_token":"acc-old","refresh_token":"ref-1","expiry":"2099-01-01T00:00:00Z"}}`
+	if _, err := store.SaveProfileFromTokenBytes("hubprof", []byte(vaultToken), nil, nil, "STANDARD", false, true); err != nil {
+		t.Fatal(err)
+	}
+	info, err = CheckHubSyncStatus(store, hubPath)
+	if err != nil {
+		t.Fatalf("CheckHubSyncStatus in-sync failed: %v", err)
+	}
+	if info.State != HubSyncInSync {
+		t.Fatalf("expected %q, got %q", HubSyncInSync, info.State)
+	}
+
+	// 3b. HubSyncInSync fallback: hub has no refresh_token, matches by email
+	hubNoRef := `{"writer_id":"wid-1","id_token_email":"u1@example.com","token":{"access_token":"acc-1","expiry":"2099-01-01T00:00:00Z"}}`
+	if err := os.WriteFile(hubPath, []byte(hubNoRef), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err = CheckHubSyncStatus(store, hubPath)
+	if err != nil {
+		t.Fatalf("CheckHubSyncStatus email fallback failed: %v", err)
+	}
+	if info.State != HubSyncInSync {
+		t.Fatalf("expected %q on email fallback, got %q", HubSyncInSync, info.State)
+	}
+
+	// 4. HubSyncOutOfSync: hub refresh_token differs from vault
+	hubDiff := `{"writer_id":"wid-2","id_token_email":"u2@example.com","token":{"access_token":"acc-2","refresh_token":"ref-other","expiry":"2099-01-01T00:00:00Z"}}`
+	if err := os.WriteFile(hubPath, []byte(hubDiff), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err = CheckHubSyncStatus(store, hubPath)
+	if err != nil {
+		t.Fatalf("CheckHubSyncStatus out-of-sync failed: %v", err)
+	}
+	if info.State != HubSyncOutOfSync {
+		t.Fatalf("expected %q, got %q", HubSyncOutOfSync, info.State)
+	}
+
+	// 4b. HubSyncOutOfSync: vault token missing for HubActive profile
+	_ = os.Remove(filepath.Join(store.AccountsDir, "hubprof", "antigravity-oauth-token"))
+	info, err = CheckHubSyncStatus(store, hubPath)
+	if err != nil {
+		t.Fatalf("CheckHubSyncStatus missing vault failed: %v", err)
+	}
+	if info.State != HubSyncOutOfSync {
+		t.Fatalf("expected %q when vault token missing, got %q", HubSyncOutOfSync, info.State)
+	}
+}
+
+func TestSyncHubToVaultIfSameAccount(t *testing.T) {
+	tmpDir := t.TempDir()
+	hubPath := filepath.Join(tmpDir, "hub-token")
+	vaultPath := filepath.Join(tmpDir, "vault-token")
+
+	// Same refresh_token -> copies hub to vault and strips writer_id
+	_ = os.WriteFile(hubPath, []byte(`{"writer_id":"wid-1","token":{"access_token":"hub-new","refresh_token":"ref-same"}}`), 0600)
+	_ = os.WriteFile(vaultPath, []byte(`{"token":{"access_token":"vault-old","refresh_token":"ref-same"}}`), 0600)
+	if err := SyncHubToVaultIfSameAccount(hubPath, vaultPath); err != nil {
+		t.Fatalf("SyncHubToVaultIfSameAccount failed: %v", err)
+	}
+	vaultData, err := ReadTokenData(vaultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ExtractAccessToken(vaultData) != "hub-new" {
+		t.Fatalf("expected vault access_token updated to hub-new, got %q", ExtractAccessToken(vaultData))
+	}
+	if _, has := vaultData["writer_id"]; has {
+		t.Fatalf("expected writer_id stripped from vault token")
+	}
+
+	// Different refresh_token -> leaves vault untouched
+	_ = os.WriteFile(hubPath, []byte(`{"writer_id":"wid-2","token":{"access_token":"hub-other","refresh_token":"ref-diff"}}`), 0600)
+	if err := SyncHubToVaultIfSameAccount(hubPath, vaultPath); err != nil {
+		t.Fatalf("SyncHubToVaultIfSameAccount diff failed: %v", err)
+	}
+	vaultData, _ = ReadTokenData(vaultPath)
+	if ExtractAccessToken(vaultData) != "hub-new" {
+		t.Fatalf("expected vault token unchanged on different refresh_token, got %q", ExtractAccessToken(vaultData))
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	t1 := now.Add(1 * time.Hour).Format(time.RFC3339)
+	t2 := now.Add(2 * time.Hour).Format(time.RFC3339)
+	t3 := now.Add(3 * time.Hour).Format(time.RFC3339)
+
+	// Older Hub token must NOT overwrite fresher vault token
+	_ = os.WriteFile(vaultPath, []byte(`{"token":{"access_token":"vault-fresher","refresh_token":"ref-same","expiry":"`+t2+`"}}`), 0600)
+	_ = os.WriteFile(hubPath, []byte(`{"writer_id":"wid-3","token":{"access_token":"hub-older","refresh_token":"ref-same","expiry":"`+t1+`"}}`), 0600)
+	if err := SyncHubToVaultIfSameAccount(hubPath, vaultPath); err != nil {
+		t.Fatalf("SyncHubToVaultIfSameAccount older hub failed: %v", err)
+	}
+	vaultData, _ = ReadTokenData(vaultPath)
+	if ExtractAccessToken(vaultData) != "vault-fresher" {
+		t.Fatalf("expected fresher vault token preserved when hub is older, got %q", ExtractAccessToken(vaultData))
+	}
+
+	// Hub token with missing/invalid expiry must NOT overwrite valid-expiry vault token
+	_ = os.WriteFile(hubPath, []byte(`{"writer_id":"wid-4","token":{"access_token":"hub-noexp","refresh_token":"ref-same"}}`), 0600)
+	if err := SyncHubToVaultIfSameAccount(hubPath, vaultPath); err != nil {
+		t.Fatalf("SyncHubToVaultIfSameAccount missing hub expiry failed: %v", err)
+	}
+	vaultData, _ = ReadTokenData(vaultPath)
+	if ExtractAccessToken(vaultData) != "vault-fresher" {
+		t.Fatalf("expected fresher vault token preserved when hub expiry missing, got %q", ExtractAccessToken(vaultData))
+	}
+
+	// Equal expiry Hub token must NOT overwrite vault token
+	_ = os.WriteFile(hubPath, []byte(`{"writer_id":"wid-5","token":{"access_token":"hub-equal","refresh_token":"ref-same","expiry":"`+t2+`"}}`), 0600)
+	if err := SyncHubToVaultIfSameAccount(hubPath, vaultPath); err != nil {
+		t.Fatalf("SyncHubToVaultIfSameAccount equal hub expiry failed: %v", err)
+	}
+	vaultData, _ = ReadTokenData(vaultPath)
+	if ExtractAccessToken(vaultData) != "vault-fresher" {
+		t.Fatalf("expected vault token preserved on equal expiry, got %q", ExtractAccessToken(vaultData))
+	}
+
+	// Hub token with empty access_token must NOT overwrite vault token even with later expiry
+	_ = os.WriteFile(hubPath, []byte(`{"writer_id":"wid-6","token":{"access_token":"","refresh_token":"ref-same","expiry":"`+t3+`"}}`), 0600)
+	if err := SyncHubToVaultIfSameAccount(hubPath, vaultPath); err != nil {
+		t.Fatalf("SyncHubToVaultIfSameAccount empty hub access_token failed: %v", err)
+	}
+	vaultData, _ = ReadTokenData(vaultPath)
+	if ExtractAccessToken(vaultData) != "vault-fresher" {
+		t.Fatalf("expected vault token preserved when hub access_token empty, got %q", ExtractAccessToken(vaultData))
+	}
+
+	// Newer Hub token DOES update vault token and strips writer_id
+	_ = os.WriteFile(hubPath, []byte(`{"writer_id":"wid-7","token":{"access_token":"hub-newest","refresh_token":"ref-same","expiry":"`+t3+`"}}`), 0600)
+	if err := SyncHubToVaultIfSameAccount(hubPath, vaultPath); err != nil {
+		t.Fatalf("SyncHubToVaultIfSameAccount newer hub failed: %v", err)
+	}
+	vaultData, _ = ReadTokenData(vaultPath)
+	if ExtractAccessToken(vaultData) != "hub-newest" {
+		t.Fatalf("expected vault token updated to hub-newest, got %q", ExtractAccessToken(vaultData))
+	}
+	if _, has := vaultData["writer_id"]; has {
+		t.Fatalf("expected writer_id stripped from updated vault token")
+	}
+}
+
+func TestRefreshAccountTokenSyncsHubActive(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "hub-refreshed-access",
+			"expires_in":   3600,
+		})
+	}))
+	defer mockServer.Close()
+
+	t.Setenv("PROMUX_OAUTH_TOKEN_URL", mockServer.URL)
+	promuxDir := t.TempDir()
+	geminiDir := t.TempDir()
+	hubGemini := t.TempDir()
+	t.Setenv("PROMUX_HUB_GEMINI_DIR", hubGemini)
+
+	// CLI active = alpha, Hub active = beta
+	cliLive := filepath.Join(geminiDir, "antigravity-oauth-token")
+	_ = os.WriteFile(cliLive, []byte(`{"token":{"access_token":"cli-acc","refresh_token":"cli-ref","expiry":"2099-01-01T00:00:00Z"}}`), 0600)
+	store := storage.New(promuxDir, geminiDir)
+	_, _ = store.SaveProfile("alpha", nil, nil, "STANDARD")
+
+	_, err := store.SaveProfileFromTokenBytes(
+		"beta",
+		[]byte(`{"token":{"access_token":"beta-old","refresh_token":"beta-ref","expiry":"2020-01-01T00:00:00Z"}}`),
+		nil, nil, "STANDARD", false, true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hubLive := filepath.Join(hubGemini, "jetski-standalone-oauth-token")
+	_ = os.WriteFile(hubLive, []byte(`{"writer_id":"keep-me","token":{"access_token":"beta-old","refresh_token":"beta-ref","expiry":"2020-01-01T00:00:00Z"}}`), 0600)
+
+	refreshed, err := RefreshAccountToken(store, "beta", false)
+	if err != nil || !refreshed {
+		t.Fatalf("expected beta refreshed, got refreshed=%v err=%v", refreshed, err)
+	}
+
+	hubData, err := ReadTokenData(hubLive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ExtractAccessToken(hubData) != "hub-refreshed-access" {
+		t.Fatalf("expected hub access token updated, got %q", ExtractAccessToken(hubData))
+	}
+	if hubData["writer_id"] != "keep-me" {
+		t.Fatalf("expected writer_id preserved, got %v", hubData["writer_id"])
+	}
+}
