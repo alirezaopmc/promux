@@ -529,11 +529,17 @@ func TestCLIHubHumanOutputsAndRestartNeedsReconnect(t *testing.T) {
 	}
 
 	out, err = executeCommand("hub", "restart")
-	if err != nil {
-		t.Fatalf("hub restart (no daemons) failed: %v", err)
-	}
-	if !strings.Contains(out, "No running Hub language_server daemons found") {
-		t.Fatalf("unexpected hub restart empty output:\n%s", out)
+	if runtime.GOOS == "windows" {
+		if !errors.Is(err, errors.ErrUnsupported) {
+			t.Fatalf("expected ErrUnsupported for hub restart on windows, got: %v", err)
+		}
+	} else {
+		if err != nil {
+			t.Fatalf("hub restart (no daemons) failed: %v", err)
+		}
+		if !strings.Contains(out, "No running Hub language_server daemons found") {
+			t.Fatalf("unexpected hub restart empty output:\n%s", out)
+		}
 	}
 
 	// Human switch --hub --no-restart and next --hub --no-restart
