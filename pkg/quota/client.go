@@ -123,7 +123,7 @@ func (c *QuotaClient) post(endpoint string, payload any) (map[string]any, error)
 			return result, nil
 		}
 
-		lastErr = fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, u, string(respBytes))
+		lastErr = ParseAPIError(resp.StatusCode, u, respBytes)
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			break
 		}

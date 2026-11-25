@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -35,6 +36,9 @@ func newPrimeCmd() *cobra.Command {
 (or has floating 100% capacity) and executing a minimal headless prompt turn under lock to fix the 7-day reset countdown.`,
 		Example: `  # Prime all eligible profiles that have reset or have floating quota
   promux prime
+
+  # Prime with detailed verbose output
+  promux prime -v
 
   # Prime a specific vaulted account
   promux prime personal
@@ -103,6 +107,8 @@ func newPrimeCmd() *cobra.Command {
 			errorCount := 0
 			now := time.Now().UTC()
 
+			isVerbose := Verbose || DebugMode
+
 			for _, name := range targetAccounts {
 				var qs *models.QuotaSummary
 				if cache != nil {
@@ -113,14 +119,15 @@ func newPrimeCmd() *cobra.Command {
 					qs, qErr = queryQuotaFunc(ctx, store, name)
 					if qErr != nil {
 						errorCount++
+						cleanErr := quota.FormatQuotaError(qErr, isVerbose)
 						res := quota.PrimeResult{
 							Account: name,
 							Primed:  false,
-							Error:   qErr.Error(),
+							Error:   cleanErr,
 						}
 						results = append(results, res)
 						if !isJSON {
-							fmt.Fprintf(out, "%s %s: failed to query quota: %v\n", color.RedString("✗"), name, qErr)
+							fmt.Fprintf(out, "%s %s: failed to query quota: %s\n", color.RedString("✗"), name, cleanErr)
 						}
 						continue
 					}
@@ -177,14 +184,15 @@ func newPrimeCmd() *cobra.Command {
 				res, pErr := primeAccountFunc(ctx, store, cache, name, force)
 				if pErr != nil {
 					errorCount++
+					cleanErr := quota.FormatPrimeError(pErr, isVerbose)
 					results = append(results, quota.PrimeResult{
 						Account: name,
 						Primed:  false,
 						Reason:  reason,
-						Error:   pErr.Error(),
+						Error:   cleanErr,
 					})
 					if !isJSON {
-						fmt.Fprintf(out, "%s [%s] Priming failed: %v\n", color.RedString("✗"), name, pErr)
+						fmt.Fprintf(out, "%s [%s] Priming failed: %s\n", color.RedString("✗"), name, cleanErr)
 					}
 				} else if res != nil && res.Primed {
 					primedCount++
@@ -194,7 +202,8 @@ func newPrimeCmd() *cobra.Command {
 							rel := formatResetRelative(res.NewReset, time.Now().UTC())
 							fmt.Fprintf(out, "   [%s] Token primed! New weekly reset: %s (%s)\n", name, *res.NewReset, rel)
 						} else if res.Error != "" {
-							fmt.Fprintf(out, "   [%s] Token primed! (warning: quota refresh delayed: %s)\n", name, res.Error)
+							cleanWarn := quota.FormatQuotaError(errors.New(res.Error), isVerbose)
+							fmt.Fprintf(out, "   [%s] Token primed! (warning: quota refresh delayed: %s)\n", name, cleanWarn)
 						} else {
 							fmt.Fprintf(out, "   [%s] Token primed!\n", name)
 						}
@@ -217,9 +226,16 @@ func newPrimeCmd() *cobra.Command {
 			}
 
 			if dryRun {
-				fmt.Fprintf(out, "\nSummary: %s would be primed, %s (dry-run).\n",
-					pluralize(primedCount, "account", "accounts"),
-					pluralize(skippedCount, "account skipped", "accounts skipped"))
+				if errorCount > 0 {
+					fmt.Fprintf(out, "\nSummary: %s would be primed, %s, %s (dry-run).\n",
+						pluralize(primedCount, "account", "accounts"),
+						pluralize(skippedCount, "account skipped", "accounts skipped"),
+						pluralize(errorCount, "error", "errors"))
+				} else {
+					fmt.Fprintf(out, "\nSummary: %s would be primed, %s (dry-run).\n",
+						pluralize(primedCount, "account", "accounts"),
+						pluralize(skippedCount, "account skipped", "accounts skipped"))
+				}
 			} else if errorCount > 0 {
 				fmt.Fprintf(out, "\nSummary: %s primed, %s, %s.\n",
 					pluralize(primedCount, "account", "accounts"),

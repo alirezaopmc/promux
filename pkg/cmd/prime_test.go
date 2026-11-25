@@ -267,6 +267,100 @@ func TestPrimeCmd_LiveExecution(t *testing.T) {
 		}
 	})
 
+	t.Run("priming failure clean output vs verbose", func(t *testing.T) {
+		primeAccountFunc = func(ctx context.Context, s *storage.StorageEngine, c *quota.QuotaCache, acct string, f bool) (*quota.PrimeResult, error) {
+			return nil, &quota.PrimeExecError{
+				Err:    errors.New("exit status 1"),
+				Output: "error: Eligibility check failed: Your current account is not eligible for Antigravity, because it is not currently available in your location.",
+			}
+		}
+
+		// Clean mode (default)
+		out, err := executeCommand("prime", "gamma")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		expectedClean := "[gamma] Priming failed: Eligibility check failed: Your current account is not eligible for Antigravity, because it is not currently available in your location."
+		if !strings.Contains(out, expectedClean) {
+			t.Fatalf("expected clean priming failure %q, got: %s", expectedClean, out)
+		}
+		if strings.Contains(out, "exit status 1") || strings.Contains(out, "agy command failed") {
+			t.Fatalf("clean output should not contain verbose exit status: %s", out)
+		}
+
+		// Verbose mode (-v)
+		outV, err := executeCommand("prime", "gamma", "-v")
+		if err != nil {
+			t.Fatalf("unexpected error with -v: %v", err)
+		}
+		if !strings.Contains(outV, "agy command failed: exit status 1 (output: error: Eligibility check failed:") {
+			t.Fatalf("expected verbose priming failure with -v, got: %s", outV)
+		}
+	})
+
+	t.Run("quota query failure clean output vs verbose", func(t *testing.T) {
+		// Evict cache to force queryQuotaFunc
+		_ = cache.Invalidate("gamma")
+		defer func() { _ = cache.Set("gamma", qsGamma) }()
+		origQuery := queryQuotaFunc
+		defer func() { queryQuotaFunc = origQuery }()
+
+		rawJSON := `{
+  "error": {
+    "code": 403,
+    "message": "You do not have a valid license of this product. Please contact your administrator to request a license. (#3501)",
+    "status": "PERMISSION_DENIED"
+  }
+}`
+		queryQuotaFunc = func(ctx context.Context, store *storage.StorageEngine, account string) (*models.QuotaSummary, error) {
+			return nil, quota.ParseAPIError(403, "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", []byte(rawJSON))
+		}
+
+		// Clean mode (default)
+		out, err := executeCommand("prime", "gamma")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		expectedClean := "gamma: failed to query quota: HTTP 403 (PERMISSION_DENIED): You do not have a valid license of this product (#3501)"
+		if !strings.Contains(out, expectedClean) {
+			t.Fatalf("expected clean quota error %q, got: %s", expectedClean, out)
+		}
+		if strings.Contains(out, "{\n") || strings.Contains(out, "cloudcode-pa.googleapis.com") {
+			t.Fatalf("clean output must not contain JSON or full URL: %s", out)
+		}
+
+		// Verbose mode (--verbose)
+		outV, err := executeCommand("prime", "gamma", "--verbose")
+		if err != nil {
+			t.Fatalf("unexpected error with --verbose: %v", err)
+		}
+		if !strings.Contains(outV, "HTTP 403 from https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary:") {
+			t.Fatalf("expected verbose quota error with --verbose, got: %s", outV)
+		}
+	})
+
+	t.Run("dry-run with query error reports errors in summary", func(t *testing.T) {
+		_ = cache.Invalidate("gamma")
+		defer func() { _ = cache.Set("gamma", qsGamma) }()
+		origQuery := queryQuotaFunc
+		defer func() { queryQuotaFunc = origQuery }()
+
+		queryQuotaFunc = func(ctx context.Context, store *storage.StorageEngine, account string) (*models.QuotaSummary, error) {
+			return nil, errors.New("simulated network failure")
+		}
+
+		out, err := executeCommand("prime", "gamma", "--dry-run")
+		if err != nil {
+			t.Fatalf("unexpected error in dry-run with error: %v", err)
+		}
+		if !strings.Contains(out, "gamma: failed to query quota: simulated network failure") {
+			t.Fatalf("missing failure message: %s", out)
+		}
+		if !strings.Contains(out, "Summary: 0 accounts would be primed, 0 accounts skipped, 1 error (dry-run).") {
+			t.Fatalf("expected summary to include 1 error, got: %s", out)
+		}
+	})
+
 	t.Run("live json output", func(t *testing.T) {
 		primeAccountFunc = func(ctx context.Context, s *storage.StorageEngine, c *quota.QuotaCache, acct string, f bool) (*quota.PrimeResult, error) {
 			return &quota.PrimeResult{

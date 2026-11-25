@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -100,13 +101,15 @@ func newQuotaCmd() *cobra.Command {
 						for _, r := range results {
 							if r.Primed {
 								if r.Error != "" {
-									fmt.Fprintf(out, "⚡ Primed weekly quota for profile '%s' (warning: %s)\n", r.Account, r.Error)
+									cleanWarn := quota.FormatQuotaError(errors.New(r.Error), Verbose || DebugMode)
+									fmt.Fprintf(out, "⚡ Primed weekly quota for profile '%s' (warning: %s)\n", r.Account, cleanWarn)
 								} else {
 									fmt.Fprintf(out, "⚡ Primed weekly quota for profile '%s'\n", r.Account)
 								}
 								printed = true
 							} else if r.Error != "" {
-								fmt.Fprintf(out, "✗ Failed to prime profile '%s': %s\n", r.Account, r.Error)
+								cleanErr := quota.FormatPrimeError(errors.New(r.Error), Verbose || DebugMode)
+								fmt.Fprintf(out, "✗ Failed to prime profile '%s': %s\n", r.Account, cleanErr)
 								printed = true
 							}
 						}
@@ -134,11 +137,13 @@ func newQuotaCmd() *cobra.Command {
 				res, err := primeAccountFunc(ctx, store, cache, targetName, false)
 				if err != nil {
 					if !JSONOut {
-						fmt.Fprintf(out, "✗ Failed to prime profile '%s': %v\n\n", targetName, err)
+						cleanErr := quota.FormatPrimeError(err, Verbose || DebugMode)
+						fmt.Fprintf(out, "✗ Failed to prime profile '%s': %s\n\n", targetName, cleanErr)
 					}
 				} else if !JSONOut && res != nil && res.Primed {
 					if res.Error != "" {
-						fmt.Fprintf(out, "⚡ Primed weekly quota for profile '%s' (warning: %s)\n\n", targetName, res.Error)
+						cleanWarn := quota.FormatQuotaError(errors.New(res.Error), Verbose || DebugMode)
+						fmt.Fprintf(out, "⚡ Primed weekly quota for profile '%s' (warning: %s)\n\n", targetName, cleanWarn)
 					} else {
 						fmt.Fprintf(out, "⚡ Primed weekly quota for profile '%s'\n\n", targetName)
 					}
@@ -147,6 +152,9 @@ func newQuotaCmd() *cobra.Command {
 
 			qs, _, err := fetchAccountQuota(store, cache, targetName, force)
 			if err != nil {
+				if !JSONOut && !Verbose && !DebugMode {
+					return errors.New(quota.FormatQuotaError(err, false))
+				}
 				return err
 			}
 

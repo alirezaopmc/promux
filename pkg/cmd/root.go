@@ -15,6 +15,7 @@ var (
 	ToolName  = "agy"
 	JSONOut   = false
 	DebugMode = false
+	Verbose   = false
 )
 
 func GetStorage() *storage.StorageEngine {
@@ -35,6 +36,7 @@ func init() {
 	RootCmd.PersistentFlags().StringVarP(&ToolName, "tool", "t", "agy", "Target tool (agy, claude, codex, cursor)")
 	RootCmd.PersistentFlags().BoolVar(&JSONOut, "json", false, "Output results in JSON format")
 	RootCmd.PersistentFlags().BoolVar(&DebugMode, "debug", false, "Enable debug output")
+	RootCmd.PersistentFlags().BoolVarP(&Verbose, "verbose", "v", false, "Enable verbose output")
 
 	RootCmd.AddCommand(newProfileCmd())
 	RootCmd.AddCommand(newQuotaCmd())
